@@ -1,20 +1,22 @@
 """
 LangGraph Pipeline — the central StateGraph that wires all agent nodes.
 
-Flow:
-    task_parser → repo_manager → repo_analyzer → code_writer
-        → test_runner → git_agent → pr_agent → report
+Key insight about LangGraph StateGraph(dict):
+    LangGraph passes the FULL accumulated state dict to each node.
+    Each node returns a PARTIAL dict of only the keys it changed.
+    LangGraph shallow-merges the partial dict INTO the accumulated state.
+    
+    This means: if node1 sets "parsed_task" and node2 only sets "workspace_path",
+    the accumulated state after node2 will have BOTH keys.
+    
+    HOWEVER: our _node wrapper builds an AgentState from the state dict,
+    calls the agent (which may mutate step_logs on the state object),
+    and must return ALL updated fields — not just the ones the agent explicitly
+    returned. Otherwise step_logs mutations are lost.
 
 Conditional edges:
-    - After every node: if status == FAILED → jump directly to report (fail-fast).
-    - After test_runner: if status == PARTIAL (tests failed, report mode)
-        → continue to git_agent (PR will be opened with failure note).
-    - After test_runner: if status == FAILED and mode == "block"
-        → jump to report (no PR).
-
-State merging:
-    LangGraph merges the dict returned by each node into the shared AgentState.
-    Nodes return only the keys they set — everything else is preserved.
+    - After every node: FAILED → report (fail-fast)
+    - After test_runner: PARTIAL → git_agent (open PR with failure note)
 """
 
 from __future__ import annotations
@@ -39,21 +41,71 @@ from app.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-TEST_FAILURE_MODE = os.getenv("TEST_FAILURE_MODE", "report")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LangGraph requires a plain dict as the state type annotation.
-# We adapt AgentState (Pydantic) via a thin wrapper.
+# State (de)serialization helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _dict_to_state(state_dict: dict[str, Any]) -> AgentState:
+    """
+    Build an AgentState from a LangGraph state dict.
+    Handles string→enum conversion and skips None values so Pydantic
+    defaults are not overwritten.
+    """
+    clean: dict[str, Any] = {}
+    for k, v in state_dict.items():
+        if v is None:
+            continue
+        if k == "status" and isinstance(v, str):
+            try:
+                clean[k] = PipelineStatus(v)
+            except ValueError:
+                pass
+        else:
+            clean[k] = v
+    return AgentState(**clean)
+
+
+def _state_to_partial(state: AgentState, agent_result: dict[str, Any]) -> dict[str, Any]:
+    """
+    Merge agent_result into the full AgentState and return a serializable dict
+    of ALL fields. This ensures LangGraph's accumulated state is always complete.
+    """
+    # Apply agent result to state
+    for k, v in agent_result.items():
+        if hasattr(state, k) and v is not None:
+            setattr(state, k, v)
+
+    # Serialize to plain dict (Pydantic objects are fine in LangGraph dict state)
+    result: dict[str, Any] = {}
+    for field_name in AgentState.model_fields:
+        val = getattr(state, field_name)
+        # Serialize enums to string values
+        if isinstance(val, PipelineStatus):
+            result[field_name] = val.value
+        else:
+            result[field_name] = val
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Node wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _node(agent_run):
     """
     Wrap an agent's run(state) function for LangGraph.
-    LangGraph passes state as a dict; we convert to/from AgentState.
+    
+    - Deserializes the full LangGraph state dict → AgentState
+    - Runs the agent
+    - Returns the COMPLETE updated state (not just changed keys)
+      so the next node always has access to all fields.
     """
     def wrapper(state_dict: dict[str, Any]) -> dict[str, Any]:
-        state = AgentState(**state_dict)
-        return agent_run(state)
+        state = _dict_to_state(state_dict)
+        agent_result = agent_run(state)
+        return _state_to_partial(state, agent_result)
+
     wrapper.__name__ = agent_run.__module__.split(".")[-1]
     return wrapper
 
@@ -63,56 +115,37 @@ def _node(agent_run):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _route_after_node(state_dict: dict[str, Any]) -> str:
-    """
-    Generic post-node router.
-    FAILED → report (fail-fast)
-    Otherwise → next node (determined by graph edges)
-    """
-    raw = state_dict.get("status", PipelineStatus.PENDING)
-    status_val = raw.value if isinstance(raw, PipelineStatus) else str(raw)
-    if status_val == PipelineStatus.FAILED.value:
+    status = str(state_dict.get("status", "pending"))
+    if status == PipelineStatus.FAILED.value:
         return "report"
     return "continue"
 
 
 def _route_after_tests(state_dict: dict[str, Any]) -> str:
-    """
-    Post-test router.
-    PARTIAL (failed, report mode) → git_agent (open PR with warning)
-    FAILED  (blocked)             → report
-    RUNNING (passed)              → git_agent
-    """
-    raw = state_dict.get("status", PipelineStatus.PENDING)
-    status_val = raw.value if isinstance(raw, PipelineStatus) else str(raw)
-    if status_val == PipelineStatus.FAILED.value:
+    status = str(state_dict.get("status", "pending"))
+    if status == PipelineStatus.FAILED.value:
         return "report"
-    return "git_agent"   # covers both RUNNING and PARTIAL
+    return "git_agent"   # RUNNING and PARTIAL both proceed to git
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Graph builder
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_graph() -> Any:
-    """Build and compile the LangGraph StateGraph."""
-
-    # Use dict as state type (LangGraph native)
+def build_graph():
     graph = StateGraph(dict)
 
-    # ── Register nodes ────────────────────────────────────────────────────
-    graph.add_node("task_parser",    _node(taskparsergeneer.run))
-    graph.add_node("repo_manager",   _node(repomanager.run))
-    graph.add_node("repo_analyzer",  _node(repoanalyzegeneer.run))
-    graph.add_node("code_writer",    _node(codegeneer.run))
-    graph.add_node("test_runner",    _node(testgeneer.run))
-    graph.add_node("git_agent",      _node(gitgeneer.run))
-    graph.add_node("pr_agent",       _node(prgeneer.run))
-    graph.add_node("report",         _node(reportgeneer.run))
+    graph.add_node("task_parser",   _node(taskparsergeneer.run))
+    graph.add_node("repo_manager",  _node(repomanager.run))
+    graph.add_node("repo_analyzer", _node(repoanalyzegeneer.run))
+    graph.add_node("code_writer",   _node(codegeneer.run))
+    graph.add_node("test_runner",   _node(testgeneer.run))
+    graph.add_node("git_agent",     _node(gitgeneer.run))
+    graph.add_node("pr_agent",      _node(prgeneer.run))
+    graph.add_node("report",        _node(reportgeneer.run))
 
-    # ── Entry point ───────────────────────────────────────────────────────
     graph.set_entry_point("task_parser")
 
-    # ── Conditional edges (fail-fast after each node) ─────────────────────
     for node, next_node in [
         ("task_parser",   "repo_manager"),
         ("repo_manager",  "repo_analyzer"),
@@ -120,36 +153,30 @@ def build_graph() -> Any:
         ("code_writer",   "test_runner"),
     ]:
         graph.add_conditional_edges(
-            node,
-            _route_after_node,
+            node, _route_after_node,
             {"continue": next_node, "report": "report"},
         )
 
-    # ── Test runner has custom routing ────────────────────────────────────
     graph.add_conditional_edges(
-        "test_runner",
-        _route_after_tests,
+        "test_runner", _route_after_tests,
         {"git_agent": "git_agent", "report": "report"},
     )
 
-    # ── Git + PR + report (linear tail) ───────────────────────────────────
-    graph.add_conditional_edges(
-        "git_agent",
-        _route_after_node,
-        {"continue": "pr_agent", "report": "report"},
-    )
-    graph.add_conditional_edges(
-        "pr_agent",
-        _route_after_node,
-        {"continue": "report", "report": "report"},
-    )
-    graph.add_edge("report", END)
+    for node, next_node in [
+        ("git_agent", "pr_agent"),
+        ("pr_agent",  "report"),
+    ]:
+        graph.add_conditional_edges(
+            node, _route_after_node,
+            {"continue": next_node, "report": "report"},
+        )
 
+    graph.add_edge("report", END)
     return graph.compile()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Public entry point called by the FastAPI background task
+# Singleton
 # ─────────────────────────────────────────────────────────────────────────────
 
 _compiled_graph = None
@@ -162,32 +189,23 @@ def get_graph():
     return _compiled_graph
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Public entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
 def run_pipeline(raw_task: dict[str, Any], trace_id: str = "") -> dict[str, Any]:
-    """
-    Execute the full agent pipeline for a given task.
-
-    Args:
-        raw_task : the raw task payload dict (taskId, title, description)
-        trace_id : optional trace ID for logging correlation
-
-    Returns:
-        The final state dict (AgentState fields).
-    """
     from app.utils.logger import bind_trace
     if trace_id:
         bind_trace(trace_id)
 
     logger.info("pipeline.invoked", task_id=raw_task.get("taskId"), trace_id=trace_id)
 
-    initial_state: dict[str, Any] = AgentState(raw_task=raw_task).model_dump(mode='json')
+    initial_state: dict[str, Any] = AgentState(raw_task=raw_task).model_dump(mode="json")
 
     graph = get_graph()
     final_state: dict[str, Any] = graph.invoke(initial_state)
 
-    # LangGraph merges node outputs into the initial dict.
-    # Reconstruct AgentState carefully — enum fields may come back as strings.
-    merged = {**initial_state, **{k: v for k, v in final_state.items() if v is not None}}
-    final_agent_state = AgentState(**merged)
+    final_agent_state = _dict_to_state(final_state)
 
     from app.agents.reportgeneer import build_report
     report = build_report(final_agent_state)

@@ -59,7 +59,9 @@ def _make_branch_name(task_id: str, title: str) -> str:
 def _inject_token(url: str, token: str) -> str:
     if not token:
         return url
-    return url.replace("https://", f"https://{token}@", 1)
+    # Strip any existing token first to prevent double-injection
+    clean = _strip_token(url)
+    return clean.replace("https://", f"https://{token}@", 1)
 
 
 def _strip_token(url: str) -> str:

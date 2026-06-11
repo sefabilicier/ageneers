@@ -1,0 +1,70 @@
+{
+  "traceId": "02229aa3-b476-4e17-a0d2-beb5de1eae36",
+  "taskId": "unknown",
+  "status": "pending",
+  "startedAt": "2026-06-11T12:54:10.173053+00:00",
+  "finishedAt": "2026-06-11T12:54:12.287654+00:00",
+  "error": null,
+  "pipeline": {
+    "steps": [
+      {
+        "step": "task_parser",
+        "status": "started",
+        "timestamp": "2026-06-11T12:54:10.187008+00:00",
+        "detail": ""
+      },
+      {
+        "step": "task_parser",
+        "status": "completed",
+        "timestamp": "2026-06-11T12:54:11.236592+00:00",
+        "detail": "repo=https://github.com/sefabilicier/iamtesting branch=main"
+      },
+      {
+        "step": "repo_manager",
+        "status": "started",
+        "timestamp": "2026-06-11T12:54:11.236592+00:00",
+        "detail": ""
+      },
+      {
+        "step": "repo_manager",
+        "status": "cloning",
+        "timestamp": "2026-06-11T12:54:11.237737+00:00",
+        "detail": "workspace=D:\\ageneers\\workspaces\\TASK-999-0af060f1"
+      },
+      {
+        "step": "repo_manager",
+        "status": "completed",
+        "timestamp": "2026-06-11T12:54:12.286647+00:00",
+        "detail": "workspace=D:\\ageneers\\workspaces\\TASK-999-0af060f1 branch=main"
+      },
+      {
+        "step": "repo_analyzer",
+        "status": "started",
+        "timestamp": "2026-06-11T12:54:12.287654+00:00",
+        "detail": ""
+      },
+      {
+        "step": "repo_analyzer",
+        "status": "failed",
+        "timestamp": "2026-06-11T12:54:12.287654+00:00",
+        "detail": "repo_analyzer: workspace_path or parsed_task missing"
+      },
+      {
+        "step": "report",
+        "status": "completed",
+        "timestamp": "2026-06-11T12:54:12.287654+00:00",
+        "detail": "status=failed"
+      }
+    ]
+  },
+  "repository": {
+    "url": null,
+    "baseBranch": null,
+    "featureBranch": null,
+    "commitSha": null
+  },
+  "analysis": null,
+  "codeChange": null,
+  "testResult": null,
+  "pullRequest": null
+}

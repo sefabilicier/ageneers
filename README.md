@@ -131,7 +131,7 @@ ageneers/
 │   │   └── tasks.py                # POST /api/tasks, GET /api/tasks/{id}/report
 │   ├── agents/
 │   │   ├── taskparsergeneer.py     # Node 1 — LLM task parsing
-│   │   ├── repomanagergeneer.py    # Node 2 — git clone, workspace isolation
+│   │   ├── repomanager.py    # Node 2 — git clone, workspace isolation
 │   │   ├── repoanalyzegeneer.py    # Node 3 — stack detection, file ranking
 │   │   ├── codegeneer.py           # Node 4 — AI code change
 │   │   ├── testgeneer.py           # Node 5 — test execution, retry
@@ -165,7 +165,7 @@ The pipeline uses a **ReAct-inspired** (Reasoning + Acting) pattern implemented 
 | Node | Agent Type | LLM Used | Key Output |
 |---|---|---|---|
 | TaskParserGeneer | Perception | ✅ Yes | `ParsedTask` |
-| RepoManagerGeneer | Action | ❌ No | `workspace_path` |
+| repomanager | Action | ❌ No | `workspace_path` |
 | RepoAnalyzeGeneer | Perception + Reasoning | ✅ Yes (file ranking) | `RepoAnalysis` |
 | CodeGeneer | Reasoning + Action | ✅ Yes | `CodeChange`, files on disk |
 | TestGeneer | Action (+ Reasoning on retry) | ✅ Retry only | `TestResult` |

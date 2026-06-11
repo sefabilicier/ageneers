@@ -1,0 +1,6 @@
+{
+  "traceId": "cfef97b8-a01a-41ac-aedf-d8d4848d8738",
+  "taskId": "TASK-999",
+  "status": "failed",
+  "error": "cannot import name 'repomanager' from 'app.agents' (unknown location)"
+}

@@ -1,5 +1,5 @@
 """
-ageneers — FastAPI application entry point.
+ai-dev-agent — FastAPI application entry point.
 
 Startup sequence:
 1. Load .env
@@ -17,6 +17,11 @@ from fastapi.responses import JSONResponse
 
 from app.utils.logger import configure_logging, get_logger
 
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 # ── Configure logging before anything else ───────────────────────────────────
 configure_logging()
 logger = get_logger(__name__)
@@ -25,9 +30,9 @@ logger = get_logger(__name__)
 # ── Lifespan (replaces deprecated @app.on_event) ─────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN001
-    logger.info("ageneers starting up")
+    logger.info("ai-dev-agent starting up")
     yield
-    logger.info("ageneers shutting down")
+    logger.info("ai-dev-agent shutting down")
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
@@ -50,7 +55,7 @@ def create_app() -> FastAPI:
     # ── Health check ─────────────────────────────────────────────────────────
     @app.get("/health", tags=["meta"])
     async def health() -> JSONResponse:
-        return JSONResponse({"status": "ok", "service": "ageneers"})
+        return JSONResponse({"status": "ok", "service": "ai-dev-agent"})
 
     return app
 
@@ -69,5 +74,6 @@ if __name__ == "__main__":
         host=os.getenv("APP_HOST", "0.0.0.0"),
         port=int(os.getenv("APP_PORT", "8000")),
         reload=True,
-        log_config=None,   # structlog handles logging, not uvicorn's default
+        reload_dirs=["app"],          # watch ONLY app/ — never workspaces/
+        log_config=None,
     )

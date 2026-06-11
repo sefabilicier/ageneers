@@ -79,10 +79,13 @@ def _get_llm() -> ChatGroq:
 # Command builder — safe arg list, no shell interpolation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _build_command(test_command: str) -> list[str]:
+def _build_command(test_command: str, workspace: str = "") -> list[str]:
     """
     Split the test command into a safe arg list.
     Only whitelisted base commands are accepted.
+
+    For pytest: injects --rootdir and --override-ini flags so the test runner
+    uses the cloned workspace, not the parent project's pyproject.toml.
     """
     allowed_bases = {
         "pytest", "python", "mvn", "gradle", "./gradlew",
@@ -95,6 +98,14 @@ def _build_command(test_command: str) -> list[str]:
     base = parts[0].lstrip("./")
     if base not in allowed_bases and parts[0] not in allowed_bases:
         raise ValueError(f"Test command '{parts[0]}' is not in the allowed list")
+
+    # pytest: force rootdir to workspace and disable ini-file discovery
+    # so the parent project's pyproject.toml does not interfere
+    if parts[0] == "pytest" and workspace:
+        parts = parts + [
+            f"--rootdir={workspace}",
+            "--override-ini=addopts=",   # clear any inherited addopts
+        ]
 
     return parts
 
@@ -233,7 +244,7 @@ def run(state: AgentState) -> dict[str, Any]:
 
     # Validate test command (security gate)
     try:
-        cmd = _build_command(test_command)
+        cmd = _build_command(test_command, workspace=str(workspace))
     except ValueError as exc:
         msg = f"test_runner: {exc}"
         logger.error("test_runner.invalid_command", error=str(exc))
