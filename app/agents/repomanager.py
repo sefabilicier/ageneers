@@ -1,0 +1,154 @@
+"""
+RepoManager — Agent Node #2
+
+Responsibility:
+    Clone the target repository into an isolated workspace directory,
+    checkout the base branch, and prepare the environment for analysis.
+
+Design decisions:
+    - Each task gets its own workspace: workspaces/<taskId>-<short_uuid>/
+      This prevents cross-task contamination and makes cleanup trivial.
+    - Allowlist check happens before any network call — fail fast.
+    - If the same taskId is re-submitted, the existing workspace is removed
+      and re-cloned (idempotent behaviour, documented in README).
+    - Private repo support: GITHUB_TOKEN injected into clone URL, never logged.
+    - GitPython is used for all git operations — no subprocess shell calls,
+      which eliminates command-injection risk entirely.
+
+LangGraph contract:
+    Input  : AgentState  (reads  parsed_task)
+    Output : dict        (sets   workspace_path, repo_cloned, status, step_logs)
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import uuid
+from typing import Any
+
+import git
+
+from app.models.state import AgentState, PipelineStatus
+from app.security.sanitizer import is_safe_repo_url
+from app.utils.logger import get_logger
+
+logger = get_logger(__name__)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Config (from environment)
+# ─────────────────────────────────────────────────────────────────────────────
+
+WORKSPACE_BASE = os.getenv("WORKSPACE_BASE_DIR", "./workspaces")
+GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
+REPO_ALLOWLIST = [
+    s.strip() for s in os.getenv("REPO_ALLOWLIST", "").split(",") if s.strip()
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _inject_token(url: str, token: str) -> str:
+    """
+    Inject a GitHub token into the clone URL for private repo access.
+    https://github.com/org/repo  →  https://<token>@github.com/org/repo
+    Token is NEVER written to logs — callers must not log the return value.
+    """
+    if not token:
+        return url
+    return url.replace("https://", f"https://{token}@", 1)
+
+
+def _workspace_path(task_id: str) -> str:
+    short = uuid.uuid4().hex[:8]
+    safe_task_id = task_id.replace("/", "-").replace("\\", "-")
+    return os.path.abspath(os.path.join(WORKSPACE_BASE, f"{safe_task_id}-{short}"))
+
+
+def _clean_existing(path: str) -> None:
+    """Remove workspace if it already exists (idempotent re-run)."""
+    if os.path.exists(path):
+        logger.warning("repo_manager.workspace_exists_cleaning", path=path)
+        shutil.rmtree(path, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LangGraph node entry point
+# ─────────────────────────────────────────────────────────────────────────────
+
+def run(state: AgentState) -> dict[str, Any]:
+    """LangGraph node. Reads parsed_task, writes workspace_path + repo_cloned."""
+    state.log_step("repo_manager", "started")
+
+    if not state.parsed_task:
+        msg = "repo_manager: parsed_task is missing — task_parser may have failed"
+        logger.error("repo_manager.missing_parsed_task")
+        state.log_step("repo_manager", "failed", detail=msg)
+        return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
+
+    task    = state.parsed_task
+    repo_url = task.repository_url
+    branch   = task.base_branch
+    task_id  = task.task_id
+
+    logger.info("repo_manager.started", repo=repo_url, branch=branch, task_id=task_id)
+
+    # ── Security: allowlist check ─────────────────────────────────────────
+    if not is_safe_repo_url(repo_url, REPO_ALLOWLIST):
+        msg = f"Repository '{repo_url}' is not in the allowed list: {REPO_ALLOWLIST}"
+        logger.error("repo_manager.allowlist_blocked", repo=repo_url)
+        state.log_step("repo_manager", "failed", detail=msg)
+        return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
+
+    # ── Prepare workspace ─────────────────────────────────────────────────
+    os.makedirs(WORKSPACE_BASE, exist_ok=True)
+    workspace = _workspace_path(task_id)
+    _clean_existing(workspace)
+
+    logger.info("repo_manager.cloning", workspace=workspace)
+    state.log_step("repo_manager", "cloning", detail=f"workspace={workspace}")
+
+    # ── Clone ─────────────────────────────────────────────────────────────
+    try:
+        clone_url = _inject_token(repo_url, GITHUB_TOKEN)
+        # depth=1: shallow clone — faster, less data, less exposure
+        repo = git.Repo.clone_from(
+            clone_url,
+            workspace,
+            branch=branch,
+            depth=1,
+        )
+    except git.exc.GitCommandError as exc:
+        # Scrub any token from the error message before logging
+        safe_msg = str(exc).replace(GITHUB_TOKEN, "***") if GITHUB_TOKEN else str(exc)
+        logger.error("repo_manager.clone_failed", error=safe_msg)
+        state.log_step("repo_manager", "failed", detail=safe_msg)
+        return {"status": PipelineStatus.FAILED, "error": safe_msg, "step_logs": state.step_logs}
+
+    # ── Verify branch ─────────────────────────────────────────────────────
+    current_branch = repo.active_branch.name
+    if current_branch != branch:
+        msg = f"Expected branch '{branch}' but got '{current_branch}'"
+        logger.error("repo_manager.wrong_branch", expected=branch, got=current_branch)
+        state.log_step("repo_manager", "failed", detail=msg)
+        return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
+
+    logger.info(
+        "repo_manager.completed",
+        workspace=workspace,
+        branch=current_branch,
+        commit=repo.head.commit.hexsha[:8],
+    )
+    state.log_step(
+        "repo_manager", "completed",
+        detail=f"workspace={workspace} branch={current_branch}",
+    )
+
+    return {
+        "workspace_path": workspace,
+        "repo_cloned": True,
+        "status": PipelineStatus.RUNNING,
+        "step_logs": state.step_logs,
+    }
