@@ -187,7 +187,7 @@ async def create_task(
     background_tasks.add_task(
         _run_pipeline_bg,
         trace_id=trace_id,
-        payload=payload.model_dump(),
+        payload=sanitized_payload,
     )
     return TaskAcceptedResponse(traceId=trace_id, taskId=payload.taskId)
 

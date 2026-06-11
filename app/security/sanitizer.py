@@ -97,22 +97,46 @@ def sanitize_user_input(text: str) -> str:
     return text
 
 
-def is_safe_repo_url(url: str, allowlist: list[str]) -> bool:
+def is_safe_repo_url(
+    url: str,
+    allowlist: list[str],
+    denylist: list[str] | None = None,
+) -> tuple[bool, str]:
     """
-    Validate that a repository URL belongs to an allowed owner/org.
+    Validate that a repository URL is safe to clone.
+
+    Checks in order:
+        1. Denylist — explicit block list (checked first, takes priority)
+        2. Allowlist — if configured, owner must be in it
 
     Args:
         url       : e.g. "https://github.com/my-org/my-repo"
-        allowlist : list of allowed GitHub usernames or org names
+        allowlist : allowed GitHub usernames/orgs (empty = allow all)
+        denylist  : blocked GitHub usernames/orgs (empty = block none)
 
-    Returns True if the URL owner is in the allowlist, False otherwise.
+    Returns:
+        (True, "")           if URL is safe
+        (False, reason_str)  if URL is blocked
     """
-    if not allowlist:
-        return True  # allowlist not configured — open mode
-
     match = re.match(r"https?://github\.com/([^/]+)/", url)
     if not match:
-        return False
+        return False, f"URL does not look like a valid GitHub URL: {url!r}"
 
     owner = match.group(1).lower()
-    return owner in [a.lower() for a in allowlist]
+
+    # Denylist check — always applied first
+    if denylist:
+        if owner in [d.lower() for d in denylist]:
+            return False, (
+                f"Repository owner '{owner}' is on the denylist and cannot be cloned."
+            )
+
+    # Allowlist check — only applied when allowlist is configured
+    if allowlist:
+        if owner not in [a.lower() for a in allowlist]:
+            return False, (
+                f"Repository owner '{owner}' is not in the allowlist. "
+                f"Allowed owners: {allowlist}"
+            )
+
+    return True, ""

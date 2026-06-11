@@ -1,5 +1,5 @@
 """
-RepoManagerGeneer — Agent Node #2
+repomanager — Agent Node #2
 
 Responsibility:
     Clone the target repository into an isolated workspace directory,
@@ -43,6 +43,9 @@ WORKSPACE_BASE = os.getenv("WORKSPACE_BASE_DIR", "./workspaces")
 GITHUB_TOKEN   = os.getenv("GITHUB_TOKEN", "")
 REPO_ALLOWLIST = [
     s.strip() for s in os.getenv("REPO_ALLOWLIST", "").split(",") if s.strip()
+]
+REPO_DENYLIST  = [
+    s.strip() for s in os.getenv("REPO_DENYLIST", "").split(",") if s.strip()
 ]
 
 
@@ -125,12 +128,12 @@ def run(state: AgentState) -> dict[str, Any]:
                     logger.warning("repo_manager.duplicate_check_skipped", reason=str(_e)[:80])
                 # 404 = branch not found = safe to proceed
 
-    # ── Security: allowlist check ─────────────────────────────────────────
-    if not is_safe_repo_url(repo_url, REPO_ALLOWLIST):
-        msg = f"Repository '{repo_url}' is not in the allowed list: {REPO_ALLOWLIST}"
-        logger.error("repo_manager.allowlist_blocked", repo=repo_url)
-        state.log_step("repo_manager", "failed", detail=msg)
-        return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
+    # ── Security: allowlist / denylist check ─────────────────────────────
+    safe, reason = is_safe_repo_url(repo_url, REPO_ALLOWLIST, REPO_DENYLIST)
+    if not safe:
+        logger.error("repo_manager.url_blocked", repo=repo_url, reason=reason)
+        state.log_step("repo_manager", "failed", detail=reason)
+        return {"status": PipelineStatus.FAILED, "error": reason, "step_logs": state.step_logs}
 
     # ── Prepare workspace ─────────────────────────────────────────────────
     os.makedirs(WORKSPACE_BASE, exist_ok=True)

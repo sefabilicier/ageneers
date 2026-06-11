@@ -1,5 +1,5 @@
 """
-ageneers — FastAPI application entry point.
+ai-dev-agent — FastAPI application entry point.
 
 Startup sequence:
 1. Load .env
@@ -30,9 +30,53 @@ logger = get_logger(__name__)
 # ── Lifespan (replaces deprecated @app.on_event) ─────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN001
-    logger.info("ageneers starting up")
+    _validate_env()
+    logger.info("ai-dev-agent starting up")
     yield
-    logger.info("ageneers shutting down")
+    logger.info("ai-dev-agent shutting down")
+
+
+def _validate_env() -> None:
+    """
+    Check required environment variables at startup.
+    Logs clear warnings so the operator knows what is missing
+    before the first request hits a broken pipeline.
+    """
+    import os
+    missing: list[str] = []
+    warnings: list[str] = []
+
+    if not os.getenv("GROQ_API_KEY"):
+        missing.append("GROQ_API_KEY")
+
+    if not os.getenv("GITHUB_TOKEN"):
+        missing.append("GITHUB_TOKEN")
+
+    if not os.getenv("REPO_ALLOWLIST"):
+        warnings.append(
+            "REPO_ALLOWLIST is not set — any GitHub repository can be cloned. "
+            "Set REPO_ALLOWLIST=your-org to restrict access."
+        )
+
+    for w in warnings:
+        logger.warning("config.warning", detail=w)
+
+    if missing:
+        for key in missing:
+            logger.error(
+                "config.missing_required_env",
+                key=key,
+                detail=(
+                    f"{key} is not set. "
+                    f"The pipeline will fail when this credential is needed. "
+                    f"Set it in your .env file."
+                ),
+            )
+        logger.warning(
+            "config.incomplete",
+            missing=missing,
+            detail="Server started with missing credentials — some pipeline steps will fail.",
+        )
 
 
 # ── App factory ───────────────────────────────────────────────────────────────
@@ -55,7 +99,7 @@ def create_app() -> FastAPI:
     # ── Health check ─────────────────────────────────────────────────────────
     @app.get("/health", tags=["meta"])
     async def health() -> JSONResponse:
-        return JSONResponse({"status": "ok", "service": "ageneers"})
+        return JSONResponse({"status": "ok", "service": "ai-dev-agent"})
 
     return app
 
