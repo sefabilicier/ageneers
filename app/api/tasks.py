@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
@@ -181,7 +181,7 @@ async def create_task(
                    f"Wait for it to finish or use a different taskId.",
         )
 
-    logger.info("task.received", task_id=payload.taskId, trace_id=trace_id)
+    logger.info("task.received", task_id=payload.taskId, trace_id=trace_id, dry_run=dry_run, require_approval=require_approval)
     _running_tasks.add(payload.taskId)
 
     background_tasks.add_task(
@@ -190,6 +190,50 @@ async def create_task(
         payload=sanitized_payload,
     )
     return TaskAcceptedResponse(traceId=trace_id, taskId=payload.taskId)
+
+
+# Approval state store (traceId → approved bool)
+_approvals: dict[str, bool] = {}
+
+
+@router.post("/tasks/{trace_id}/approve", tags=["tasks"])
+async def approve_task(trace_id: str) -> JSONResponse:
+    """
+    Approve a paused pipeline (require_approval=true) to continue with push + PR.
+
+    When a task is submitted with ?require_approval=true, the pipeline pauses
+    after generating the diff preview but before git push.
+    Call this endpoint to resume.
+    """
+    report = _load_report(trace_id)
+    if report is None:
+        raise HTTPException(status_code=404, detail="Pipeline not found or still starting")
+
+    if report.get("status") not in ("partial",):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Pipeline is not awaiting approval",
+                     "status": report.get("status")},
+        )
+
+    _approvals[trace_id] = True
+    logger.info("task.approved", trace_id=trace_id)
+
+    # Re-run pipeline from the saved state with approved=True
+    saved_payload = report.get("_raw_payload", {})
+    if saved_payload:
+        saved_payload["approved"] = True
+        saved_payload["require_approval"] = True
+        background_tasks_store = BackgroundTasks()
+        # We can't use background_tasks here directly, so run in thread
+        import asyncio
+        asyncio.create_task(_run_pipeline_bg(trace_id + "-approved", saved_payload))
+
+    return JSONResponse(
+        status_code=202,
+        content={"status": "approved", "traceId": trace_id,
+                 "message": "Pipeline approved — push and PR creation will proceed"},
+    )
 
 
 @router.get("/tasks/{trace_id}/report", tags=["tasks"])

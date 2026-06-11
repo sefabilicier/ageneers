@@ -92,9 +92,11 @@ def create_app() -> FastAPI:
     )
 
     # ── Routers (registered here, implemented in app/api/) ───────────────────
-    from app.api.tasks import router as tasks_router  # noqa: PLC0415
+    from app.api.tasks import router as tasks_router        # noqa: PLC0415
+    from app.api.webhooks import router as webhooks_router  # noqa: PLC0415
 
     app.include_router(tasks_router, prefix="/api")
+    app.include_router(webhooks_router, prefix="/api")
 
     # ── Health check ─────────────────────────────────────────────────────────
     @app.get("/health", tags=["meta"])

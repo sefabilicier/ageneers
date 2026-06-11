@@ -116,11 +116,15 @@ class AgentState(BaseModel):
     # ── Git ────────────────────────────────────────────────────────────────
     feature_branch: str = ""
     commit_sha: str = ""
+    diff_preview: str = ""   # unified diff of all changes before PR
 
     # ── Pull Request ───────────────────────────────────────────────────────
     pull_request: PullRequest | None = None
 
     # ── Pipeline bookkeeping ───────────────────────────────────────────────
+    dry_run: bool = False          # if True: skip push, PR creation, and commit
+    require_approval: bool = False  # if True: pause before git push, wait for /approve
+    approved: bool = False          # set to True by POST /api/tasks/{traceId}/approve
     status: PipelineStatus = PipelineStatus.PENDING
     error: str = ""                # last error message, if any
     step_logs: list[StepLog] = Field(default_factory=list)

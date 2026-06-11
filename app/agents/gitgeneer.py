@@ -159,6 +159,50 @@ def run(state: AgentState) -> dict[str, Any]:
     )
     logger.info("git_agent.committed", sha=commit.hexsha[:8], message=commit_message)
 
+    # ── Generate diff preview (before push) ───────────────────────────────
+    try:
+        # Unified diff of everything committed vs the base branch
+        diff_text = repo.git.diff("HEAD~1", "HEAD", unified=3)
+        # Cap at 8000 chars for storage — full diff may be large
+        if len(diff_text) > 8000:
+            diff_text = diff_text[:8000] + "\n\n... [diff truncated] ..."
+        logger.info("git_agent.diff_generated", lines=diff_text.count("\n"))
+    except Exception as exc:
+        logger.warning("git_agent.diff_failed", error=str(exc))
+        diff_text = ""
+
+    # ── Human approval gate ──────────────────────────────────────────────
+    if state.require_approval and not state.approved:
+        msg = (
+            f"Pipeline paused — waiting for human approval before push. "
+            f"Diff preview is ready. "
+            f"Approve via: POST /api/tasks/{{trace_id}}/approve"
+        )
+        logger.info("git_agent.awaiting_approval", branch=branch_name)
+        state.log_step("git_agent", "awaiting_approval",
+                       detail=f"[APPROVAL] branch={branch_name} sha={commit.hexsha[:8]}")
+        return {
+            "feature_branch": branch_name,
+            "commit_sha":     commit.hexsha,
+            "diff_preview":   diff_text,
+            "status":         PipelineStatus.PARTIAL,   # paused, not failed
+            "error":          msg,
+            "step_logs":      state.step_logs,
+        }
+
+    # ── Dry-run: skip push ───────────────────────────────────────────────
+    if state.dry_run:
+        logger.info("git_agent.dry_run_skip_push", branch=branch_name)
+        state.log_step("git_agent", "completed",
+                       detail=f"[DRY-RUN] branch={branch_name} sha={commit.hexsha[:8]} (not pushed)")
+        return {
+            "feature_branch": branch_name,
+            "commit_sha":     commit.hexsha,
+            "diff_preview":   diff_text,
+            "status":         PipelineStatus.RUNNING,
+            "step_logs":      state.step_logs,
+        }
+
     # ── Push (token injected temporarily, cleaned up in finally) ──────────
     if not repo.remotes:
         msg = "git_agent: repository has no remotes — cannot push"
@@ -206,6 +250,7 @@ def run(state: AgentState) -> dict[str, Any]:
     return {
         "feature_branch": branch_name,
         "commit_sha":     commit.hexsha,
+        "diff_preview":   diff_text,
         "status":         PipelineStatus.RUNNING,
         "step_logs":      state.step_logs,
     }
