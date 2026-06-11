@@ -1,0 +1,52 @@
+{
+  "traceId": "f203bad5-db87-4f23-b4a3-6b8a87cbc88a",
+  "taskId": "TASK-55",
+  "status": "failed",
+  "startedAt": "2026-06-11T17:46:50.261442+00:00",
+  "finishedAt": "2026-06-11T17:46:52.200685+00:00",
+  "error": "Branch 'ai-agent/TASK-55-add-email-validation-to-user-registration-api' already exists on the remote. This task was likely already processed. Please use a different taskId or modify the title.",
+  "pipeline": {
+    "steps": [
+      {
+        "step": "task_parser",
+        "status": "started",
+        "timestamp": "2026-06-11T17:46:50.263444+00:00",
+        "detail": ""
+      },
+      {
+        "step": "task_parser",
+        "status": "completed",
+        "timestamp": "2026-06-11T17:46:50.586211+00:00",
+        "detail": "repo=https://github.com/sefabilicier/iamtesting branch=main"
+      },
+      {
+        "step": "repo_manager",
+        "status": "started",
+        "timestamp": "2026-06-11T17:46:50.588208+00:00",
+        "detail": ""
+      },
+      {
+        "step": "repo_manager",
+        "status": "failed",
+        "timestamp": "2026-06-11T17:46:52.197672+00:00",
+        "detail": "Branch 'ai-agent/TASK-55-add-email-validation-to-user-registration-api' already exists on the remote. This task was likely already processed. Please use a different taskId or modify the title."
+      },
+      {
+        "step": "report",
+        "status": "completed",
+        "timestamp": "2026-06-11T17:46:52.200685+00:00",
+        "detail": "status=failed"
+      }
+    ]
+  },
+  "repository": {
+    "url": "https://github.com/sefabilicier/iamtesting",
+    "baseBranch": "main",
+    "featureBranch": null,
+    "commitSha": null
+  },
+  "analysis": null,
+  "codeChange": null,
+  "testResult": null,
+  "pullRequest": null
+}

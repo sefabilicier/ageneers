@@ -1,5 +1,5 @@
 {
-    "taskId": "TASK-1",
+    "taskId": "TASK-55",
     "title": "Add email validation to user registration API",
     "description": "Repository: https://github.com/sefabilicier/iamtesting\nBranch: main\n\nRequirement:\nAdd email format validation to POST /users/register endpoint.\n\nAcceptance Criteria:\n- Invalid email returns HTTP 400\n- Error message: Invalid email format\n- Add or update unit tests"
 }
