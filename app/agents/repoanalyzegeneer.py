@@ -189,7 +189,7 @@ def _collect_source_files(root: Path) -> tuple[list[str], list[str]]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LLM relevance ranking
+# File relevance ranking — vector-first, LLM fallback
 # ─────────────────────────────────────────────────────────────────────────────
 
 _RANK_SYSTEM = """You are a code navigation assistant.
@@ -202,8 +202,30 @@ Rules:
 4. Always include likely test files if they appear related."""
 
 
+def _vector_rank_files(requirement: str, workspace: Path,
+                        candidates: list[str]) -> list[str] | None:
+    """
+    Use ChromaDB + sentence-transformers to rank files by semantic similarity.
+    Returns ranked file list, or None if vector deps are not installed.
+    """
+    try:
+        from app.utils.vector_index import VectorIndex
+        idx = VectorIndex()
+        n = idx.build(workspace, candidates)
+        if n == 0:
+            return None
+        return idx.query(requirement, top_k=10)
+    except ImportError:
+        logger.info("repo_analyzer.vector_deps_missing",
+                    note="install chromadb sentence-transformers for semantic ranking")
+        return None
+    except Exception as exc:
+        logger.warning("repo_analyzer.vector_rank_failed", error=str(exc))
+        return None
+
+
 def _llm_rank_files(requirement: str, candidates: list[str]) -> list[str]:
-    """Ask the LLM which files are most relevant to the requirement."""
+    """Ask the LLM which files are most relevant (fallback when vector search unavailable)."""
     if not candidates:
         return []
     prompt = (
@@ -223,7 +245,7 @@ def _llm_rank_files(requirement: str, candidates: list[str]) -> list[str]:
             return [str(p) for p in result if isinstance(p, str)]
     except Exception as exc:
         logger.warning("repo_analyzer.llm_rank_failed", error=str(exc))
-    return candidates[:10]   # fallback: first 10
+    return candidates[:10]   # last-resort fallback
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -257,10 +279,18 @@ def run(state: AgentState) -> dict[str, Any]:
     logger.info("repo_analyzer.files_found",
                 source_count=len(sources), test_count=len(test_files))
 
-    # Phase 3: LLM relevance ranking (paths only — no file contents sent)
+    # Phase 3: relevance ranking — vector search first, LLM as fallback
     requirement = state.parsed_task.requirement
-    relevant = _llm_rank_files(requirement, sources + test_files)
-    logger.info("repo_analyzer.relevant_files", count=len(relevant), files=relevant)
+    all_candidates = sources + test_files
+
+    relevant = _vector_rank_files(requirement, root, all_candidates)
+    if relevant is not None:
+        logger.info("repo_analyzer.relevant_files",
+                    method="vector", count=len(relevant), files=relevant)
+    else:
+        relevant = _llm_rank_files(requirement, all_candidates)
+        logger.info("repo_analyzer.relevant_files",
+                    method="llm_fallback", count=len(relevant), files=relevant)
 
     analysis = RepoAnalysis(
         language=stack.get("language", "unknown"),
@@ -282,4 +312,4 @@ def run(state: AgentState) -> dict[str, Any]:
         "repo_analysis": analysis,
         "status": PipelineStatus.RUNNING,
         "step_logs": state.step_logs,
-    }
+    }   
