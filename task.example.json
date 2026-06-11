@@ -1,0 +1,5 @@
+{
+  "taskId": "TASK-123",
+  "title": "Add email validation to user registration API",
+  "description": "Repository: https://github.com/your-org/user-service\nBranch: main\n\nRequirement:\nAdd email format validation to the POST /users/register endpoint.\n\nAcceptance Criteria:\n- Invalid email returns HTTP 400\n- Error message: Invalid email format\n- Add or update unit tests"
+}
