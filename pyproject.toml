@@ -7,7 +7,7 @@ where = ["."]
 include = ["app*"]
 
 [project]
-name = "ai-dev-agent"
+name = "ageneers"
 version = "0.1.0"
 description = "AI Development Agent — turns task descriptions into Pull Requests"
 readme = "README.md"

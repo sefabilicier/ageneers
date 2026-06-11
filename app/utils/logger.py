@@ -1,5 +1,5 @@
 """
-Structured logger for ai-dev-agent.
+Structured logger for ageneers.
 
 - In production (LOG_FORMAT=json): emits newline-delimited JSON → easy ingestion
   by log aggregators (Datadog, Loki, CloudWatch, etc.)
@@ -80,7 +80,7 @@ def configure_logging() -> None:
     root.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
 
 
-def get_logger(name: str = "ai-dev-agent") -> structlog.stdlib.BoundLogger:
+def get_logger(name: str = "ageneers") -> structlog.stdlib.BoundLogger:
     """Return a bound logger. Bind extra context with `.bind(key=value)`."""
     return structlog.get_logger(name)
 
