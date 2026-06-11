@@ -109,6 +109,21 @@ class TestBuildPrBody:
         body = _build_pr_body(_make_full_state())
         assert "app/users.py" in body
 
+
+    def test_contains_changes_section(self):
+        body = _build_pr_body(_make_full_state())
+        assert "## Changes" in body
+        assert "routes.py" in body or "users.py" in body
+
+    def test_clean_test_command_strips_rootdir(self):
+        from app.agents.prgeneer import _clean_test_command
+        raw = "pytest --rootdir=D:\\ageneers\\workspaces\\TASK-1 --override-ini=addopts="
+        assert _clean_test_command(raw) == "pytest"
+
+    def test_clean_test_command_leaves_mvn_unchanged(self):
+        from app.agents.prgeneer import _clean_test_command
+        assert _clean_test_command("mvn test") == "mvn test"
+
     def test_ai_agent_footer(self):
         body = _build_pr_body(_make_full_state())
         assert "AI Development Agent" in body
