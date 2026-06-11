@@ -302,9 +302,14 @@ def run(state: AgentState) -> dict[str, Any]:
             HumanMessage(content=user_prompt),
         ])
         raw_output = response.content
-        usage = getattr(response, "usage_metadata", None)
-        prompt_tokens     = getattr(usage, "input_tokens", 0) if usage else 0
-        completion_tokens = getattr(usage, "output_tokens", 0) if usage else 0
+        # LangChain/Groq returns usage in multiple possible locations
+        usage = getattr(response, "usage_metadata", None) or getattr(response, "response_metadata", {}).get("token_usage", {})
+        if isinstance(usage, dict):
+            prompt_tokens     = usage.get("prompt_tokens", 0) or usage.get("input_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0) or usage.get("output_tokens", 0)
+        else:
+            prompt_tokens     = getattr(usage, "input_tokens", 0) if usage else 0
+            completion_tokens = getattr(usage, "output_tokens", 0) if usage else 0
 
         logger.info("code_writer.llm_response_received",
                     prompt_tokens=prompt_tokens,
