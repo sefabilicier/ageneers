@@ -210,7 +210,8 @@ def run(state: AgentState) -> dict[str, Any]:
         return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
 
     # ── GitHub client ─────────────────────────────────────────────────────
-    gh   = Github(GITHUB_TOKEN)
+    from github import Auth
+    gh   = Github(auth=Auth.Token(GITHUB_TOKEN))
     repo = gh.get_repo(slug)
 
     pr_title = f"{task.task_id} {task.title}"

@@ -1,5 +1,5 @@
 """
-RepoManager — Agent Node #2
+RepoManagerGeneer — Agent Node #2
 
 Responsibility:
     Clone the target repository into an isolated workspace directory,
@@ -94,6 +94,36 @@ def run(state: AgentState) -> dict[str, Any]:
     task_id  = task.task_id
 
     logger.info("repo_manager.started", repo=repo_url, branch=branch, task_id=task_id)
+
+    # ── Early duplicate branch check — before any clone/compute work ──────
+    # Branch name mirrors gitgeneer._make_branch_name logic
+    import re as _re
+    _safe_title = _re.sub(r"[^a-zA-Z0-9\-]", "-", task.title.lower())
+    _safe_title = _re.sub(r"-{2,}", "-", _safe_title).strip("-")[:50]
+    _safe_task  = _re.sub(r"[^a-zA-Z0-9\-]", "-", task_id)
+    _branch     = f"ai-agent/{_safe_task}-{_safe_title}"
+
+    if GITHUB_TOKEN:
+        _slug_match = _re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?/?$", repo_url)
+        if _slug_match:
+            try:
+                from github import Auth, Github
+                _gh   = Github(auth=Auth.Token(GITHUB_TOKEN))
+                _repo = _gh.get_repo(_slug_match.group(1))
+                _repo.get_branch(_branch)
+                # Branch exists — fail fast with a clear message
+                msg = (
+                    f"Branch '{_branch}' already exists on the remote. "
+                    f"This task was likely already processed. "
+                    f"Please use a different taskId or modify the title."
+                )
+                logger.error("repo_manager.duplicate_branch_early", branch=_branch)
+                state.log_step("repo_manager", "failed", detail=msg)
+                return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
+            except Exception as _e:
+                if "404" not in str(_e) and "Not Found" not in str(_e):
+                    logger.warning("repo_manager.duplicate_check_skipped", reason=str(_e)[:80])
+                # 404 = branch not found = safe to proceed
 
     # ── Security: allowlist check ─────────────────────────────────────────
     if not is_safe_repo_url(repo_url, REPO_ALLOWLIST):

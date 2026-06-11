@@ -7,12 +7,12 @@ Responsibility:
 
 Design decisions:
     - GitPython only — no subprocess shell calls, zero command injection risk.
-    - Branch name is derived from taskId and title, sanitised for git safety.
-    - Token is injected into the remote URL temporarily for the push, then
-      the remote URL is reset to the token-free version immediately after.
-      This prevents the token from persisting in .git/config on disk.
-    - Duplicate branch detection: if the branch already exists on the remote,
-      the node fails with a clear error (don't silently overwrite).
+    - Branch name derived from taskId + title, sanitised for git safety.
+    - Duplicate branch detection via GitHub API (reliable even with shallow clones).
+      If branch already exists on remote → FAILED with a clear, actionable message
+      telling the user to change their taskId or title to avoid the collision.
+    - Token injected into remote URL only for the push, then immediately restored
+      to the token-free version so it never persists in .git/config.
 
 LangGraph contract:
     Input  : AgentState  (reads workspace_path, parsed_task, code_change)
@@ -41,32 +41,53 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _make_branch_name(task_id: str, title: str) -> str:
-    """
-    Build a git-safe branch name.
-    Example: "TASK-123" + "Add email validation" → "ai-agent/TASK-123-add-email-validation"
-    """
     safe_title = re.sub(r"[^a-zA-Z0-9\-]", "-", title.lower())
-    safe_title = re.sub(r"-{2,}", "-", safe_title).strip("-")
-    safe_title = safe_title[:50]   # keep branch names reasonable
+    safe_title = re.sub(r"-{2,}", "-", safe_title).strip("-")[:50]
     safe_task  = re.sub(r"[^a-zA-Z0-9\-]", "-", task_id)
     return f"ai-agent/{safe_task}-{safe_title}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Remote URL helpers
+# Token helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _strip_token(url: str) -> str:
+    return re.sub(r"https://[^@]+@", "https://", url)
+
 
 def _inject_token(url: str, token: str) -> str:
     if not token:
         return url
-    # Strip any existing token first to prevent double-injection
     clean = _strip_token(url)
     return clean.replace("https://", f"https://{token}@", 1)
 
 
-def _strip_token(url: str) -> str:
-    """Remove embedded token from URL (for safe logging / storage)."""
-    return re.sub(r"https://[^@]+@", "https://", url)
+# ─────────────────────────────────────────────────────────────────────────────
+# Remote duplicate check (GitHub API — works with shallow clones)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _branch_exists_on_remote(repo_url: str, branch_name: str) -> bool:
+    """
+    Check if branch_name already exists on the GitHub remote.
+    Uses PyGithub so it works even with shallow clones where
+    repo.remotes[0].refs may not list all remote branches.
+    Returns False if the check cannot be performed (no token, non-GitHub URL).
+    """
+    if not GITHUB_TOKEN:
+        return False
+
+    slug_match = re.search(r"github\.com[/:]([^/]+/[^/]+?)(?:\.git)?/?$", repo_url)
+    if not slug_match:
+        return False
+
+    try:
+        from github import Auth, Github, GithubException
+        gh   = Github(auth=Auth.Token(GITHUB_TOKEN))
+        repo = gh.get_repo(slug_match.group(1))
+        repo.get_branch(branch_name)   # raises GithubException(404) if not found
+        return True
+    except Exception:
+        return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -98,11 +119,13 @@ def run(state: AgentState) -> dict[str, Any]:
     branch_name = _make_branch_name(task.task_id, task.title)
     logger.info("git_agent.branch_name", branch=branch_name)
 
-    # ── Check for duplicate branch on remote ─────────────────────────────
-    remote_refs = [ref.name for ref in repo.remotes[0].refs] if repo.remotes else []
-    remote_branch = f"origin/{branch_name}"
-    if remote_branch in remote_refs:
-        msg = f"git_agent: branch '{branch_name}' already exists on remote — possible duplicate task"
+    # ── Duplicate branch check (GitHub API, reliable for shallow clones) ──
+    if _branch_exists_on_remote(task.repository_url, branch_name):
+        msg = (
+            f"Branch '{branch_name}' already exists on the remote repository. "
+            f"A task with the same ID and title was likely already processed. "
+            f"To re-run, use a different taskId or modify the title slightly."
+        )
         logger.error("git_agent.duplicate_branch", branch=branch_name)
         state.log_step("git_agent", "failed", detail=msg)
         return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
@@ -136,33 +159,45 @@ def run(state: AgentState) -> dict[str, Any]:
     )
     logger.info("git_agent.committed", sha=commit.hexsha[:8], message=commit_message)
 
-    # ── Push (token injected temporarily, cleaned up immediately) ─────────
+    # ── Push (token injected temporarily, cleaned up in finally) ──────────
     if not repo.remotes:
         msg = "git_agent: repository has no remotes — cannot push"
         logger.error("git_agent.no_remote")
         state.log_step("git_agent", "failed", detail=msg)
         return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
 
-    origin = repo.remotes[0]
+    origin       = repo.remotes[0]
     original_url = origin.url
-    push_url = _inject_token(original_url, GITHUB_TOKEN)
+    push_url     = _inject_token(original_url, GITHUB_TOKEN)
 
     try:
         origin.set_url(push_url)
         push_info = origin.push(refspec=f"{branch_name}:{branch_name}")
-        # GitPython push_info flags: 0 = success, ERROR flag if failed
         for info in push_info:
             if info.flags & info.ERROR:
-                raise git.exc.GitCommandError("push", info.summary)
+                # Detect the "rejected / fetch first" case specifically
+                summary = str(info.summary).strip()
+                if "fetch first" in summary or "rejected" in summary.lower():
+                    raise git.exc.GitCommandError(
+                        "push",
+                        (
+                            f"Branch '{branch_name}' was rejected by the remote. "
+                            f"This usually means another concurrent request already "
+                            f"pushed this branch. "
+                            f"Please retry with a different taskId or title."
+                        ),
+                    )
+                raise git.exc.GitCommandError("push", summary)
         logger.info("git_agent.pushed", branch=branch_name)
+
     except git.exc.GitCommandError as exc:
         safe_err = str(exc).replace(GITHUB_TOKEN, "***") if GITHUB_TOKEN else str(exc)
-        msg = f"git_agent: push failed: {safe_err}"
         logger.error("git_agent.push_failed", error=safe_err)
         state.log_step("git_agent", "failed", detail=safe_err)
-        return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
+        return {"status": PipelineStatus.FAILED, "error": safe_err, "step_logs": state.step_logs}
+
     finally:
-        # Always restore the clean URL — token must not persist in .git/config
+        # Always restore clean URL — token must never persist in .git/config
         origin.set_url(original_url)
 
     state.log_step("git_agent", "completed",
@@ -170,7 +205,7 @@ def run(state: AgentState) -> dict[str, Any]:
 
     return {
         "feature_branch": branch_name,
-        "commit_sha": commit.hexsha,
-        "status": PipelineStatus.RUNNING,
-        "step_logs": state.step_logs,
+        "commit_sha":     commit.hexsha,
+        "status":         PipelineStatus.RUNNING,
+        "step_logs":      state.step_logs,
     }
