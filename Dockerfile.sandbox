@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+# Önce pytest ve temel araçları kur
+RUN pip install --no-cache-dir \
+    pytest \
+    pytest-asyncio \
+    pytest-cov \
+    httpx \
+    fastapi \
+    pydantic
+
+# Test çalıştırma script'i
+WORKDIR /workspace
+CMD ["sh", "-c", "pip install -r requirements.txt 2>/dev/null || true; python -m pytest"]

@@ -1,5 +1,5 @@
 """
-ai-dev-agent — FastAPI application entry point.
+ageneers — FastAPI application entry point.
 
 Startup sequence:
 1. Load .env
@@ -32,9 +32,9 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN001
     _validate_env()
-    logger.info("ai-dev-agent starting up")
+    logger.info("ageneers starting up")
     yield
-    logger.info("ai-dev-agent shutting down")
+    logger.info("ageneers shutting down")
 
 
 def _validate_env() -> None:
@@ -104,7 +104,7 @@ def create_app() -> FastAPI:
     # ── Health check ─────────────────────────────────────────────────────────
     @app.get("/health", tags=["meta"])
     async def health() -> JSONResponse:
-        return JSONResponse({"status": "ok", "service": "ai-dev-agent"})
+        return JSONResponse({"status": "ok", "service": "ageneers"})
 
     return app
 
