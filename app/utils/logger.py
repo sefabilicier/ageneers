@@ -1,15 +1,16 @@
 """
 Structured logger for ageneers.
 
-- In production (LOG_FORMAT=json): emits newline-delimited JSON → easy ingestion
-  by log aggregators (Datadog, Loki, CloudWatch, etc.)
-- In dev (LOG_FORMAT=console): rich, colourful human-readable output.
+Design principles:
+  - Every log line answers: WHAT happened, WHERE (which agent), WHY it matters
+  - Errors always include a 'hint' field — what the operator should do
+  - Every agent node logs duration_ms so slow steps are immediately visible
+  - trace_id threads through every line — one grep finds the full pipeline run
+  - LOG_FORMAT=json  → newline-delimited JSON for log aggregators
+  - LOG_FORMAT=console → coloured human-readable output for local dev
 
-Every log entry automatically includes:
-  - timestamp (UTC ISO-8601)
-  - log level
-  - trace_id  (bound per pipeline run)
-  - step      (which agent/node is logging)
+Automatic fields on every line:
+  timestamp, severity, logger (module), trace_id, duration_ms (on *completed lines)
 """
 
 from __future__ import annotations
@@ -17,6 +18,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
+from contextlib import contextmanager
 from typing import Any
 
 import structlog
@@ -24,17 +27,17 @@ from structlog.types import EventDict, WrappedLogger
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Config helpers
+# Config
 # ─────────────────────────────────────────────────────────────────────────────
 
 _LOG_LEVEL  = os.getenv("LOG_LEVEL", "INFO").upper()
-_LOG_FORMAT = os.getenv("LOG_FORMAT", "console").lower()   # json | console
+_LOG_FORMAT = os.getenv("LOG_FORMAT", "console").lower()
 
 
 def _add_severity(
     logger: WrappedLogger, method: str, event_dict: EventDict
 ) -> EventDict:
-    """Rename structlog's 'level' key to 'severity' (GCP / Datadog convention)."""
+    """Rename 'level' → 'severity' (GCP / Datadog convention)."""
     event_dict["severity"] = event_dict.pop("level", method)
     return event_dict
 
@@ -50,10 +53,11 @@ def configure_logging() -> None:
         structlog.processors.StackInfoRenderer(),
     ]
 
-    if _LOG_FORMAT == "json":
-        renderer = structlog.processors.JSONRenderer()
-    else:
-        renderer = structlog.dev.ConsoleRenderer(colors=True)
+    renderer = (
+        structlog.processors.JSONRenderer()
+        if _LOG_FORMAT == "json"
+        else structlog.dev.ConsoleRenderer(colors=True)
+    )
 
     structlog.configure(
         processors=shared_processors + [
@@ -74,21 +78,86 @@ def configure_logging() -> None:
 
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
-
     root = logging.getLogger()
     root.handlers = [handler]
     root.setLevel(getattr(logging, _LOG_LEVEL, logging.INFO))
 
 
 def get_logger(name: str = "ageneers") -> structlog.stdlib.BoundLogger:
-    """Return a bound logger. Bind extra context with `.bind(key=value)`."""
     return structlog.get_logger(name)
 
 
 def bind_trace(trace_id: str) -> None:
-    """Bind a trace_id to the current async context (per pipeline run)."""
     structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
 
 def clear_trace() -> None:
     structlog.contextvars.clear_contextvars()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Agent timing helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+@contextmanager
+def log_step(logger: Any, node: str, **start_ctx: Any):
+    """
+    Context manager that logs node start and completion with duration.
+
+    Usage:
+        with log_step(logger, "code_writer", repo="...", files=5):
+            ... do work ...
+            # Raise on error — the context manager logs the failure
+
+    Emits:
+        {node}.started   — at entry, with start_ctx
+        {node}.completed — at exit, with duration_ms
+        {node}.failed    — if an exception is raised, with error + hint
+    """
+    logger.info(f"{node}.started", **start_ctx)
+    t0 = time.perf_counter()
+    try:
+        yield
+        ms = int((time.perf_counter() - t0) * 1000)
+        logger.info(f"{node}.completed", duration_ms=ms)
+    except Exception as exc:
+        ms = int((time.perf_counter() - t0) * 1000)
+        logger.error(
+            f"{node}.failed",
+            duration_ms=ms,
+            error=str(exc)[:200],
+        )
+        raise
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pipeline summary
+# ─────────────────────────────────────────────────────────────────────────────
+
+def log_pipeline_summary(
+    logger: Any,
+    task_id: str,
+    status: str,
+    steps: list[dict],
+    pr_url: str | None = None,
+    total_ms: int = 0,
+) -> None:
+    """
+    Emit a single summary line after the pipeline finishes.
+    Makes it easy to grep one line and understand the full outcome.
+
+    Example output:
+        pipeline.summary  status=success  task=TASK-123  steps=8/8
+                          duration_ms=12400  pr=https://github.com/.../pull/42
+    """
+    passed = sum(1 for s in steps if (s.get("status") if isinstance(s, dict) else getattr(s, "status", "")) not in ("failed", "started"))
+    total  = len({(s["step"] if isinstance(s, dict) else getattr(s, "step", "?")) for s in steps})
+
+    logger.info(
+        "pipeline.summary",
+        task_id=task_id,
+        status=status,
+        steps_ok=f"{passed}/{total}",
+        duration_ms=total_ms,
+        pr_url=pr_url or "—",
+    )
