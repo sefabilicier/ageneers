@@ -104,7 +104,7 @@ def _build_command(test_command: str, workspace: str = "") -> list[str]:
     if parts[0] == "pytest" and workspace:
         parts = parts + [
             f"--rootdir={workspace}",
-            "--override-ini=addopts=",   # clear any inherited addopts
+            "--override-ini=addopts=",
         ]
 
     return parts
