@@ -119,8 +119,16 @@ def run(state: AgentState) -> dict[str, Any]:
     branch_name = _make_branch_name(task.task_id, task.title)
     logger.info("git_agent.branch_name", branch=branch_name)
 
-    # ── Duplicate branch check (GitHub API, reliable for shallow clones) ──
-    if _branch_exists_on_remote(task.repository_url, branch_name):
+    # ── Duplicate branch check (via Git provider abstraction) ───────────
+    from app.providers.git_provider import get_git_provider as _get_provider
+    try:
+        _provider = _get_provider()
+        _slug     = _provider.get_repo_slug(task.repository_url)
+        _exists   = _provider.branch_exists(_slug, branch_name).exists
+    except Exception:
+        _exists = False  # can't check → let push handle it
+
+    if _exists:
         msg = (
             f"Branch '{branch_name}' already exists on the remote repository. "
             f"A task with the same ID and title was likely already processed. "

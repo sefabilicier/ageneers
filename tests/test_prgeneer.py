@@ -146,21 +146,20 @@ class TestRunNode:
         assert result["status"] == PipelineStatus.FAILED
         assert "GITHUB_TOKEN" in result["error"]
 
-    @patch("app.agents.prgeneer.GITHUB_TOKEN", "fake-token")
-    @patch("app.agents.prgeneer.Github")
-    def test_successful_pr_creation(self, mock_github_cls):
+    @patch("app.agents.prgeneer.get_git_provider")
+    def test_successful_pr_creation(self, mock_get_provider):
+        from app.providers.git_provider import PullRequestResult
         state = _make_full_state()
 
-        mock_pr = MagicMock()
-        mock_pr.number = 42
-        mock_pr.html_url = "https://github.com/org/repo/pull/42"
-        mock_pr.title = "TASK-123 Add email validation"
-
-        mock_repo = MagicMock()
-        mock_repo.get_pulls.return_value = []       # no existing PRs
-        mock_repo.create_pull.return_value = mock_pr
-
-        mock_github_cls.return_value.get_repo.return_value = mock_repo
+        mock_provider = MagicMock()
+        mock_provider.get_repo_slug.return_value = "org/repo"
+        mock_provider.get_open_pull_request.return_value = None
+        mock_provider.create_pull_request.return_value = PullRequestResult(
+            number=42, url="https://github.com/org/repo/pull/42",
+            title="TASK-123 Add email validation",
+            branch="ai-agent/TASK-123-add-email-validation",
+        )
+        mock_get_provider.return_value = mock_provider
 
         result = run(state)
 
@@ -169,38 +168,35 @@ class TestRunNode:
         assert pr.number == 42
         assert "42" in pr.url
 
-    @patch("app.agents.prgeneer.GITHUB_TOKEN", "fake-token")
-    @patch("app.agents.prgeneer.Github")
-    def test_duplicate_pr_reused(self, mock_github_cls):
+    @patch("app.agents.prgeneer.get_git_provider")
+    def test_duplicate_pr_reused(self, mock_get_provider):
+        from app.providers.git_provider import PullRequestResult
         state = _make_full_state()
 
-        mock_pr = MagicMock()
-        mock_pr.number = 7
-        mock_pr.html_url = "https://github.com/org/repo/pull/7"
-        mock_pr.title = "Existing PR"
-
-        mock_repo = MagicMock()
-        mock_repo.get_pulls.return_value = [mock_pr]   # existing PR found
-
-        mock_github_cls.return_value.get_repo.return_value = mock_repo
+        mock_provider = MagicMock()
+        mock_provider.get_repo_slug.return_value = "org/repo"
+        mock_provider.get_open_pull_request.return_value = PullRequestResult(
+            number=7, url="https://github.com/org/repo/pull/7",
+            title="Existing PR",
+            branch="ai-agent/TASK-123-add-email-validation",
+        )
+        mock_get_provider.return_value = mock_provider
 
         result = run(state)
 
         assert result["status"] == PipelineStatus.SUCCESS
         assert result["pull_request"].number == 7
-        mock_repo.create_pull.assert_not_called()
+        mock_provider.create_pull_request.assert_not_called()
 
-    @patch("app.agents.prgeneer.GITHUB_TOKEN", "fake-token")
-    @patch("app.agents.prgeneer.Github")
-    def test_github_api_error_fails(self, mock_github_cls):
-        from github import GithubException
+    @patch("app.agents.prgeneer.get_git_provider")
+    def test_github_api_error_fails(self, mock_get_provider):
         state = _make_full_state()
 
-        mock_repo = MagicMock()
-        mock_repo.get_pulls.return_value = []
-        mock_repo.create_pull.side_effect = GithubException(422, {"message": "Validation Failed"})
-
-        mock_github_cls.return_value.get_repo.return_value = mock_repo
+        mock_provider = MagicMock()
+        mock_provider.get_repo_slug.return_value = "org/repo"
+        mock_provider.get_open_pull_request.return_value = None
+        mock_provider.create_pull_request.side_effect = RuntimeError("GitHub API error: 422")
+        mock_get_provider.return_value = mock_provider
 
         result = run(state)
         assert result["status"] == PipelineStatus.FAILED
