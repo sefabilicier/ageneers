@@ -31,7 +31,7 @@ from app.agents import (
     gitgeneer,
     prgeneer,
     repoanalyzegeneer,
-    repomanagergeneer,
+    repomanager,
     reportgeneer,
     taskparsergeneer,
     testgeneer,
@@ -136,7 +136,7 @@ def build_graph():
     graph = StateGraph(dict)
  
     graph.add_node("task_parser",   _node(taskparsergeneer.run))
-    graph.add_node("repo_manager",  _node(repomanagergeneer.run))
+    graph.add_node("repo_manager",  _node(repomanager.run))
     graph.add_node("repo_analyzer", _node(repoanalyzegeneer.run))
     graph.add_node("code_writer",   _node(codegeneer.run))
     graph.add_node("test_runner",   _node(testgeneer.run))

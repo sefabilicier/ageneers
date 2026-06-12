@@ -1,5 +1,5 @@
 """
-ageneers — FastAPI application entry point.
+ai-dev-agent — FastAPI application entry point.
 
 Startup sequence:
 1. Load .env
@@ -22,6 +22,7 @@ import os
 
 load_dotenv()
 
+
 # ── Configure logging before anything else ───────────────────────────────────
 configure_logging()
 logger = get_logger(__name__)
@@ -31,9 +32,9 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN001
     _validate_env()
-    logger.info("ageneers starting up")
+    logger.info("ai-dev-agent starting up")
     yield
-    logger.info("ageneers shutting down")
+    logger.info("ai-dev-agent shutting down")
 
 
 def _validate_env() -> None:
@@ -92,16 +93,18 @@ def create_app() -> FastAPI:
     )
 
     # ── Routers (registered here, implemented in app/api/) ───────────────────
-    from app.api.tasks import router as tasks_router        # noqa: PLC0415
-    from app.api.webhooks import router as webhooks_router  # noqa: PLC0415
+    from app.api.tasks import router as tasks_router              # noqa: PLC0415
+    from app.api.webhooks import router as webhooks_router        # noqa: PLC0415
+    from app.api.monitoring import router as monitoring_router    # noqa: PLC0415
 
     app.include_router(tasks_router, prefix="/api")
     app.include_router(webhooks_router, prefix="/api")
+    app.include_router(monitoring_router, prefix="/api")
 
     # ── Health check ─────────────────────────────────────────────────────────
     @app.get("/health", tags=["meta"])
     async def health() -> JSONResponse:
-        return JSONResponse({"status": "ok", "service": "ageneers"})
+        return JSONResponse({"status": "ok", "service": "ai-dev-agent"})
 
     return app
 

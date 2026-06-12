@@ -49,6 +49,7 @@ def build_report(state: AgentState) -> dict[str, Any]:
             "baseBranch": task.base_branch if task else None,
             "featureBranch": state.feature_branch or None,
             "commitSha": state.commit_sha[:8] if state.commit_sha else None,
+            "diffPreview": state.diff_preview or None,
         },
         "analysis": {
             "language": analysis.language if analysis else None,

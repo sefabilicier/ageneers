@@ -121,6 +121,9 @@ class AgentState(BaseModel):
     # ── Pull Request ───────────────────────────────────────────────────────
     pull_request: PullRequest | None = None
 
+    # ── Token usage tracking (populated by each LLM-calling agent)
+    token_usage: dict[str, dict[str, int]] = {}  # {agent_name: {prompt: N, completion: N}}
+
     # ── Pipeline bookkeeping ───────────────────────────────────────────────
     dry_run: bool = False          # if True: skip push, PR creation, and commit
     require_approval: bool = False  # if True: pause before git push, wait for /approve

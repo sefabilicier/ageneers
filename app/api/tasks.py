@@ -124,6 +124,8 @@ async def _run_pipeline_bg(trace_id: str, payload: dict[str, Any]) -> None:
         from app.graph.pipeline import run_pipeline
         report = run_pipeline(raw_task=payload, trace_id=trace_id)
         await _save_report(trace_id, report)
+        from app.api.monitoring import record_pipeline_result
+        record_pipeline_result(report)
         logger.info("pipeline.background_finished",
                     task_id=task_id, status=report.get("status"))
     except Exception as exc:
