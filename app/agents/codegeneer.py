@@ -408,4 +408,5 @@ def run(state: AgentState) -> dict[str, Any]:
         "code_change": code_change,
         "status": PipelineStatus.RUNNING,
         "step_logs": state.step_logs,
+        "token_usage": state.token_usage,
     }

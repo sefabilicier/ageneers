@@ -81,6 +81,22 @@ def _compute_quality_score(state: AgentState) -> dict:
     else:
         breakdown["no_retries"] = {"points": 0, "detail": f"{retry_count} retries"}
 
+    # Code review bonus/penalty
+    review = state.code_review
+    if review:
+        critical_count = sum(1 for i in review.issues if i.severity == "critical")
+        warning_count  = sum(1 for i in review.issues if i.severity == "warning")
+        if critical_count == 0 and warning_count == 0:
+            score = min(score + 5, 100)
+            breakdown["review_clean"] = {"points": 5, "detail": "no review issues"}
+        else:
+            penalty = critical_count * 10 + warning_count * 3
+            score = max(score - penalty, 0)
+            breakdown["review_issues"] = {
+                "points": -penalty,
+                "detail": f"{critical_count} critical, {warning_count} warnings",
+            }
+
     grade = "A" if score >= 90 else "B" if score >= 70 else "C" if score >= 50 else "F"
 
     return {
@@ -149,6 +165,21 @@ def build_report(state: AgentState) -> dict[str, Any]:
             for agent, usage in (state.token_usage or {}).items()
         },
         "qualityScore": _compute_quality_score(state),
+        "codeReview": {
+            "passed":  state.code_review.passed,
+            "summary": state.code_review.summary,
+            "issues":  [
+                {"category": i.category, "severity": i.severity,
+                 "file": i.file, "description": i.description}
+                for i in state.code_review.issues
+            ],
+        } if state.code_review else None,
+        "criteriaVerification": {
+            "allSatisfied":     state.criteria_result.all_satisfied,
+            "unsatisfiedCount": state.criteria_result.unsatisfied_count,
+            "retryCount":       state.criteria_retry_count,
+            "results":          state.criteria_result.results,
+        } if state.criteria_result else None,
     }
 
 

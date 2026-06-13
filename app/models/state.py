@@ -11,6 +11,7 @@ Design principles:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -93,6 +94,33 @@ class StepLog(BaseModel):
 # Main AgentState
 # ─────────────────────────────────────────────────────────────────────────────
 
+
+@dataclass
+class ReviewIssue:
+    """A single issue found during code review."""
+    category:    str   # security | correctness | quality | tests
+    severity:    str   # critical | warning | info
+    file:        str
+    description: str
+
+
+@dataclass
+class CodeReview:
+    """Result of the code review agent."""
+    issues:  list[ReviewIssue]
+    passed:  bool    # False if any critical issues found
+    summary: str
+
+
+@dataclass
+class CriteriaResult:
+    """Result of the acceptance criteria verifier."""
+    results:           list[dict]   # raw per-criterion results
+    all_satisfied:     bool
+    unsatisfied_count: int
+    retry_needed:      bool
+
+
 class AgentState(BaseModel):
     # ── Input ──────────────────────────────────────────────────────────────
     raw_task: dict[str, Any] = Field(default_factory=dict)
@@ -121,8 +149,19 @@ class AgentState(BaseModel):
     # ── Pull Request ───────────────────────────────────────────────────────
     pull_request: PullRequest | None = None
 
+    # ── Code review result (populated by code_reviewer node)
+    code_review:          CodeReview | None = None
+    # ── Criteria verification result
+    criteria_result:      CriteriaResult | None = None
+    criteria_retry_count: int = 0
+
     # ── Token usage tracking (populated by each LLM-calling agent)
     token_usage: dict[str, dict[str, int]] = {}  # {agent_name: {prompt: N, completion: N}}
+
+    # ── Evaluator-optimizer state (criteria verifier feedback loop)
+    criteria_feedback:     str  = ""    # feedback from criteria_verifier to code_writer
+    criteria_retry_count:  int  = 0     # how many times criteria_verifier has retried
+    criteria_all_passed:   bool = True  # last verifier result
 
     # ── Pipeline bookkeeping ───────────────────────────────────────────────
     dry_run: bool = False          # if True: skip push, PR creation, and commit
