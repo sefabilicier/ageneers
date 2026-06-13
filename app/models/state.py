@@ -113,6 +113,15 @@ class CodeReview:
 
 
 @dataclass
+class RollbackResult:
+    """Result of a rollback attempt after a post-push failure."""
+    performed: bool
+    branch:    str
+    reason:    str
+    success:   bool   # whether the branch deletion succeeded
+
+
+@dataclass
 class CriteriaResult:
     """Result of the acceptance criteria verifier."""
     results:           list[dict]   # raw per-criterion results
@@ -154,6 +163,9 @@ class AgentState(BaseModel):
     # ── Criteria verification result
     criteria_result:      CriteriaResult | None = None
     criteria_retry_count: int = 0
+
+    # ── Rollback result (populated by rollback_agent if triggered)
+    rollback_result: RollbackResult | None = None
 
     # ── Token usage tracking (populated by each LLM-calling agent)
     token_usage: dict[str, dict[str, int]] = {}  # {agent_name: {prompt: N, completion: N}}

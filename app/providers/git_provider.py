@@ -86,6 +86,16 @@ class GitProvider(ABC):
         Used for duplicate PR detection.
         """
 
+    @abstractmethod
+    def delete_branch(self, repo_slug: str, branch_name: str) -> bool:
+        """
+        Delete a branch from the remote.
+        Used for rollback when a pipeline fails after pushing.
+
+        Returns True if deleted, False if branch didn't exist or deletion failed.
+        Never raises — rollback must not crash the pipeline.
+        """
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GitHub implementation
@@ -168,6 +178,16 @@ class GitHubProvider(GitProvider):
             branch=head,
         )
 
+    def delete_branch(self, repo_slug: str, branch_name: str) -> bool:
+        try:
+            repo = self._gh.get_repo(repo_slug)
+            ref  = repo.get_git_ref(f"heads/{branch_name}")
+            ref.delete()
+            return True
+        except Exception:
+            # Branch may not exist, or token lacks permission — never raise
+            return False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Factory — agents call this, never instantiate providers directly
@@ -198,7 +218,7 @@ def get_git_provider() -> GitProvider:
             )
         return GitHubProvider(token)
 
-    # Future providers — uncomment when implemented:
+    # Future providers — we uncomment when implemented:
     # if provider == "gitlab":
     #     return GitLabProvider(token=os.getenv("GITLAB_TOKEN", ""))
     # if provider == "bitbucket":

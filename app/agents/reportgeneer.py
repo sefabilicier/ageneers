@@ -180,6 +180,12 @@ def build_report(state: AgentState) -> dict[str, Any]:
             "retryCount":       state.criteria_retry_count,
             "results":          state.criteria_result.results,
         } if state.criteria_result else None,
+        "rollback": {
+            "performed": state.rollback_result.performed,
+            "branch":    state.rollback_result.branch,
+            "reason":    state.rollback_result.reason,
+            "success":   state.rollback_result.success,
+        } if state.rollback_result else None,
     }
 
 

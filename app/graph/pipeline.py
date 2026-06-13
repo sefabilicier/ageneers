@@ -32,6 +32,7 @@ from app.agents import (
     codegeneer,
     gitgeneer,
     prgeneer,
+    rollbackgeneer,
     repoanalyzegeneer,
     repomanager,
     reportgeneer,
@@ -167,6 +168,7 @@ def build_graph():
     graph.add_node("test_runner",       _node(testgeneer.run))
     graph.add_node("git_agent",         _node(gitgeneer.run))
     graph.add_node("pr_agent",          _node(prgeneer.run))
+    graph.add_node("rollback_agent",     _node(rollbackgeneer.run))
     graph.add_node("report",            _node(reportgeneer.run))
 
     graph.set_entry_point("task_parser")
@@ -204,14 +206,20 @@ def build_graph():
         {"git_agent": "git_agent", "report": "report"},
     )
 
-    for node, next_node in [
-        ("git_agent", "pr_agent"),
-        ("pr_agent",  "report"),
-    ]:
-        graph.add_conditional_edges(
-            node, _route_after_node,
-            {"continue": next_node, "report": "report"},
-        )
+    # git_agent → pr_agent (normal), or → report if git_agent itself failed
+    # (nothing was pushed yet, so no rollback needed)
+    graph.add_conditional_edges(
+        "git_agent", _route_after_node,
+        {"continue": "pr_agent", "report": "report"},
+    )
+
+    # pr_agent → report (success), or → rollback_agent (failed after push)
+    graph.add_conditional_edges(
+        "pr_agent", _route_after_node,
+        {"continue": "report", "report": "rollback_agent"},
+    )
+
+    graph.add_edge("rollback_agent", "report")
 
     graph.add_edge("report", END)
     return graph.compile()
