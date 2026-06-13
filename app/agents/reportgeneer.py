@@ -22,6 +22,74 @@ from app.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+
+def _compute_quality_score(state: AgentState) -> dict:
+    """
+    Compute a simple quality score for the pipeline run.
+
+    Score breakdown (0-100):
+      30 pts  — code was generated and written (files > 0)
+      30 pts  — tests passed (returncode == 0)
+      20 pts  — PR was created successfully
+      10 pts  — diff was generated (actual code changed)
+      10 pts  — no retries needed (first attempt succeeded)
+
+    Returns dict with total score and breakdown.
+    """
+    score = 0
+    breakdown = {}
+
+    # Code generation
+    change = state.code_change
+    files_written = len(change.changed_files) if change and change.changed_files else 0
+    if files_written > 0:
+        score += 30
+        breakdown["code_generated"] = {"points": 30, "detail": f"{files_written} files"}
+    else:
+        breakdown["code_generated"] = {"points": 0, "detail": "no files written"}
+
+    # Tests
+    test_result = state.test_result
+    if test_result and test_result.status == "passed":
+        score += 30
+        breakdown["tests_passed"] = {"points": 30, "detail": "all tests green"}
+    elif test_result:
+        status_str = test_result.status.value if hasattr(test_result.status, "value") else str(test_result.status)
+        breakdown["tests_passed"] = {"points": 0, "detail": f"tests {status_str}"}
+    else:
+        breakdown["tests_passed"] = {"points": 0, "detail": "not run"}
+
+    # PR created
+    if state.pull_request and state.pull_request.url:
+        score += 20
+        breakdown["pr_created"] = {"points": 20, "detail": state.pull_request.url}
+    else:
+        breakdown["pr_created"] = {"points": 0, "detail": "no PR"}
+
+    # Diff generated
+    if state.diff_preview:
+        score += 10
+        breakdown["diff_generated"] = {"points": 10, "detail": "diff available"}
+    else:
+        breakdown["diff_generated"] = {"points": 0, "detail": "no diff"}
+
+    # No retries
+    retry_count = test_result.retry_count if test_result else 0
+    if retry_count == 0 and files_written > 0:
+        score += 10
+        breakdown["no_retries"] = {"points": 10, "detail": "succeeded on first attempt"}
+    else:
+        breakdown["no_retries"] = {"points": 0, "detail": f"{retry_count} retries"}
+
+    grade = "A" if score >= 90 else "B" if score >= 70 else "C" if score >= 50 else "F"
+
+    return {
+        "total": score,
+        "grade": grade,
+        "breakdown": breakdown,
+    }
+
+
 def build_report(state: AgentState) -> dict[str, Any]:
     """Build a serialisable execution report dict from final AgentState."""
     task = state.parsed_task
@@ -76,6 +144,11 @@ def build_report(state: AgentState) -> dict[str, Any]:
             "title": pr.title,
             "branch": pr.branch,
         } if pr else None,
+        "tokenUsage": {
+            agent: usage
+            for agent, usage in (state.token_usage or {}).items()
+        },
+        "qualityScore": _compute_quality_score(state),
     }
 
 

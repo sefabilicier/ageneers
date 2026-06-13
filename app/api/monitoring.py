@@ -36,6 +36,7 @@ _counters: dict[str, int | float] = {
     "llm_prompt_tokens":  0,
     "llm_completion_tokens": 0,
     "total_duration_ms":  0,
+    "quality_score_total": 0,
 }
 
 _recent_tasks: deque = deque(maxlen=50)   # last 50 tasks
@@ -72,6 +73,10 @@ def record_pipeline_result(report: dict[str, Any]) -> None:
                 _counters["total_duration_ms"] += int((f - s).total_seconds() * 1000)
             except Exception:
                 pass
+
+        # Quality score
+        quality = report.get("qualityScore") or {}
+        _counters["quality_score_total"] += quality.get("total", 0)
 
         # Task summary for the list endpoint
         pr = report.get("pullRequest") or {}
@@ -119,6 +124,7 @@ async def get_metrics() -> JSONResponse:
                 "tasks_partial":  partial,
                 "success_rate_pct": success_rate,
                 "avg_duration_ms":  avg_duration,
+                "avg_quality_score": round(_counters["quality_score_total"] / total) if total else 0,
             },
             "llm": {
                 "prompt_tokens_total":     _counters["llm_prompt_tokens"],
@@ -245,7 +251,7 @@ async def get_prometheus_metrics():
 
     Add to prometheus.yml:
         scrape_configs:
-          - job_name: ageneers
+          - job_name: ai-dev-agent
             static_configs:
               - targets: [localhost:8000]
             metrics_path: /api/metrics/prometheus
@@ -329,3 +335,33 @@ async def get_audit_log(limit: int = 50) -> JSONResponse:
     from app.utils.audit import get_recent_audit_entries
     entries = get_recent_audit_entries(limit=min(limit, 500))
     return JSONResponse({"entries": entries, "count": len(entries)})
+
+@router.get("/prompts")
+async def get_prompt_versions() -> JSONResponse:
+    """
+    Show active prompt versions for all agents.
+
+    Useful for debugging — tells you which system prompt version
+    is currently loaded for each agent.
+
+    To change a version: set PROMPT_VERSION_code_writer=2 in .env
+
+    Example:
+        curl http://localhost:8000/api/prompts
+    """
+    from app.prompts import list_versions, get_active_version
+    import os
+
+    agents = ["code_writer", "task_parser"]
+    result = {}
+    for agent in agents:
+        versions = list_versions(agent)
+        active   = get_active_version(agent)
+        env_key  = f"PROMPT_VERSION_{agent}"
+        result[agent] = {
+            "active_version":    active,
+            "available_versions": versions,
+            "env_override":       os.getenv(env_key),
+        }
+
+    return JSONResponse({"prompts": result})
