@@ -256,6 +256,10 @@ def run(state: AgentState) -> dict[str, Any]:
             base=task.base_branch,
             draft=False,
         )
+        from app.utils.audit import audit
+        audit("pr.created",
+              task_id=state.parsed_task.task_id if state.parsed_task else None,
+              pr_number=pr.number, pr_url=pr.url, branch=head)
         logger.info("pr_agent.created", number=pr.number, url=pr.url)
     except RuntimeError as exc:
         msg = str(exc)

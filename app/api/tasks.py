@@ -12,7 +12,9 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
@@ -25,6 +27,10 @@ REPORTS_DIR = Path(os.getenv("REPORTS_DIR", "./reports"))
 REPORTS_DIR.mkdir(exist_ok=True)
 
 _reports: dict[str, dict[str, Any]] = {}
+
+# Rate limiting
+_limiter = Limiter(key_func=get_remote_address)
+MAX_CONCURRENT_TASKS = int(os.getenv("MAX_CONCURRENT_TASKS", "5"))
 _running_tasks: set[str] = set()
 _lock = asyncio.Lock()
 
@@ -125,7 +131,13 @@ async def _run_pipeline_bg(trace_id: str, payload: dict[str, Any]) -> None:
         report = run_pipeline(raw_task=payload, trace_id=trace_id)
         await _save_report(trace_id, report)
         from app.api.monitoring import record_pipeline_result
+        from app.utils.audit import audit
         record_pipeline_result(report)
+        pr_url = (report.get("pullRequest") or {}).get("url")
+        audit("pipeline.finished",
+              trace_id=trace_id, task_id=task_id,
+              status=report.get("status"), pr_url=pr_url,
+              error=report.get("error"))
         logger.info("pipeline.background_finished",
                     task_id=task_id, status=report.get("status"))
     except Exception as exc:
@@ -145,7 +157,9 @@ async def _run_pipeline_bg(trace_id: str, payload: dict[str, Any]) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 @router.post("/tasks", response_model=TaskAcceptedResponse, status_code=202)
+@_limiter.limit(os.getenv("RATE_LIMIT_TASKS", "20/minute"))
 async def create_task(
+    request: Request,
     payload: TaskRequest,
     background_tasks: BackgroundTasks,
     dry_run: bool = False,
@@ -166,6 +180,14 @@ async def create_task(
     safe_task_id     = sanitize_user_input(payload.taskId)
     safe_title       = sanitize_user_input(payload.title)
     safe_description = sanitize_user_input(payload.description)
+
+    # Max concurrent tasks check
+    if len(_running_tasks) >= MAX_CONCURRENT_TASKS:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many concurrent tasks ({len(_running_tasks)}/{MAX_CONCURRENT_TASKS}). "
+                   f"Wait for a running task to finish before submitting a new one.",
+        )
 
     # Duplicate task check (concurrent)
     if safe_task_id in _running_tasks:
@@ -204,6 +226,9 @@ async def create_task(
         "require_approval": require_approval,
     }
 
+    from app.utils.audit import audit
+    audit("task.received", trace_id=trace_id, task_id=safe_task_id,
+          repo=safe_description[:80], dry_run=dry_run, require_approval=require_approval)
     logger.info("task.received",
                 task_id=safe_task_id,
                 trace_id=trace_id,

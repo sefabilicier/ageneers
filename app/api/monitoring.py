@@ -262,40 +262,70 @@ async def get_prometheus_metrics():
         dur      = _counters["total_duration_ms"]
 
     lines = [
-        "# HELP ageneers_tasks_total Total pipeline runs",
-        "# TYPE ageneers_tasks_total counter",
-        f"ageneers_tasks_total {total}",
+        "# HELP ai_dev_agent_tasks_total Total pipeline runs",
+        "# TYPE ai_dev_agent_tasks_total counter",
+        f"ai_dev_agent_tasks_total {total}",
         "",
-        "# HELP ageneers_tasks_success_total Successful pipeline runs",
-        "# TYPE ageneers_tasks_success_total counter",
-        f"ageneers_tasks_success_total {success}",
+        "# HELP ai_dev_agent_tasks_success_total Successful pipeline runs",
+        "# TYPE ai_dev_agent_tasks_success_total counter",
+        f"ai_dev_agent_tasks_success_total {success}",
         "",
-        "# HELP ageneers_tasks_failed_total Failed pipeline runs",
-        "# TYPE ageneers_tasks_failed_total counter",
-        f"ageneers_tasks_failed_total {failed}",
+        "# HELP ai_dev_agent_tasks_failed_total Failed pipeline runs",
+        "# TYPE ai_dev_agent_tasks_failed_total counter",
+        f"ai_dev_agent_tasks_failed_total {failed}",
         "",
-        "# HELP ageneers_tasks_partial_total Partial pipeline runs (tests failed but PR opened)",
-        "# TYPE ageneers_tasks_partial_total counter",
-        f"ageneers_tasks_partial_total {partial}",
+        "# HELP ai_dev_agent_tasks_partial_total Partial pipeline runs (tests failed but PR opened)",
+        "# TYPE ai_dev_agent_tasks_partial_total counter",
+        f"ai_dev_agent_tasks_partial_total {partial}",
         "",
-        "# HELP ageneers_llm_prompt_tokens_total Total LLM prompt tokens consumed",
-        "# TYPE ageneers_llm_prompt_tokens_total counter",
-        f"ageneers_llm_prompt_tokens_total {prompt}",
+        "# HELP ai_dev_agent_llm_prompt_tokens_total Total LLM prompt tokens consumed",
+        "# TYPE ai_dev_agent_llm_prompt_tokens_total counter",
+        f"ai_dev_agent_llm_prompt_tokens_total {prompt}",
         "",
-        "# HELP ageneers_llm_completion_tokens_total Total LLM completion tokens consumed",
-        "# TYPE ageneers_llm_completion_tokens_total counter",
-        f"ageneers_llm_completion_tokens_total {completion}",
+        "# HELP ai_dev_agent_llm_completion_tokens_total Total LLM completion tokens consumed",
+        "# TYPE ai_dev_agent_llm_completion_tokens_total counter",
+        f"ai_dev_agent_llm_completion_tokens_total {completion}",
         "",
-        "# HELP ageneers_pipeline_duration_ms_total Total pipeline duration in ms",
-        "# TYPE ageneers_pipeline_duration_ms_total counter",
-        f"ageneers_pipeline_duration_ms_total {dur}",
+        "# HELP ai_dev_agent_pipeline_duration_ms_total Total pipeline duration in ms",
+        "# TYPE ai_dev_agent_pipeline_duration_ms_total counter",
+        f"ai_dev_agent_pipeline_duration_ms_total {dur}",
         "",
-        "# HELP ageneers_success_rate Pipeline success rate (0-1)",
-        "# TYPE ageneers_success_rate gauge",
-        f"ageneers_success_rate {round(success / total, 4) if total else 0}",
+        "# HELP ai_dev_agent_success_rate Pipeline success rate (0-1)",
+        "# TYPE ai_dev_agent_success_rate gauge",
+        f"ai_dev_agent_success_rate {round(success / total, 4) if total else 0}",
     ]
 
     return PlainTextResponse(
         content="\n".join(lines) + "\n",
         media_type="text/plain; version=0.0.4",
     )
+
+@router.post("/admin/cleanup")
+async def trigger_cleanup() -> JSONResponse:
+    """
+    Manually trigger workspace cleanup (admin use).
+
+    Deletes workspaces older than WORKSPACE_MAX_AGE_HOURS immediately.
+
+    Example:
+        curl -X POST http://localhost:8000/api/admin/cleanup
+    """
+    from app.utils.workspace_cleanup import cleanup_now
+    result = cleanup_now()
+    return JSONResponse({"status": "completed", **result})
+
+@router.get("/audit")
+async def get_audit_log(limit: int = 50) -> JSONResponse:
+    """
+    Recent audit trail entries (newest first).
+
+    Shows all significant pipeline events: tasks received, PRs created,
+    failures, etc. Written to disk in append-only NDJSON format.
+
+    Example:
+        curl http://localhost:8000/api/audit
+        curl http://localhost:8000/api/audit?limit=10
+    """
+    from app.utils.audit import get_recent_audit_entries
+    entries = get_recent_audit_entries(limit=min(limit, 500))
+    return JSONResponse({"entries": entries, "count": len(entries)})
