@@ -86,17 +86,8 @@ model is one component wired into a larger system, not the system itself.
 Every LLM-driven node in the pipeline follows the same shape, which maps onto
 the classic Reason, Act, Observe, Adjust loop:
 
-```
-   ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌─────────────┐
-   │  Reason  │ --> │   Act    │ --> │ Observe  │ --> │ Adjust /     │
-   │ internal │     │ write    │     │ read     │     │ Decide       │
-   │ thinking │     │ file,    │     │ result,  │     │ loop back to │
-   │ (LLM)    │     │ run cmd, │     │ parse    │     │ Reason if    │
-   │          │     │ API call │     │ output   │     │ needed       │
-   └──────────┘     └──────────┘     └──────────┘     └──────┬──────┘
-        ^                                                      │
-        └──────────────────────────────────────────────────────┘
-```
+<img width="5500" height="2255" alt="Image" src="https://github.com/user-attachments/assets/c9c7300f-d1a1-40b6-806f-acf6c02c9a72" />
+
 
 Concretely:
 
@@ -150,43 +141,7 @@ LLM.
 
 ### 3.1 High-level overview
 
-```
-+--------------------------------------------------------------------------+
-|                      Pipeline Console (frontend)                          |
-|             React + Vite -- http://localhost:5173                         |
-|  chatbot intake -> POST /api/tasks -> poll /timeline -> render live flow  |
-+------------------------------------+--------------------------------------+
-                                      | HTTP (CORS-enabled)
-                                      v
-+--------------------------------------------------------------------------+
-|                     FastAPI Application -- :8000                          |
-|                                                                            |
-|  Middleware:  API Key auth -> CORS -> Rate limiting (slowapi)             |
-|                                                                            |
-|  Routers:                                                                 |
-|   /api/tasks     submit, approve, fetch report                           |
-|   /api/webhooks  GitHub Issue -> task trigger                             |
-|   /api           metrics, audit, prompts, admin/cleanup                  |
-|                                                                            |
-|  Background services:                                                    |
-|   - workspace cleanup scheduler (daemon thread)                          |
-|   - graceful shutdown handler (SIGTERM)                                  |
-+------------------------------------+--------------------------------------+
-                                      | BackgroundTask
-                                      v
-+--------------------------------------------------------------------------+
-|                  LangGraph StateGraph (12 nodes)                          |
-|               see section 4 for the full node-by-node flow               |
-+-----------+------------------------+------------------------+-------------+
-            |                        |                        |
-            v                        v                        v
-+--------------------+   +---------------------+   +-------------------------+
-|  Groq API          |   |  GitHub API          |   |  Workspace FS +          |
-|  (Llama 3.3-70B)    |   |  (PyGithub, via      |   |  Docker Sandbox          |
-|  LLM calls          |   |   GitProvider        |   |  (WSL/Linux, test        |
-|                     |   |   abstraction)       |   |   isolation)             |
-+--------------------+   +---------------------+   +-------------------------+
-```
+<img width="5000" height="4500" alt="Image" src="https://github.com/user-attachments/assets/ff7e7fe5-8dab-4217-8498-a223106c6b9f" />
 
 ### 3.2 Folder structure
 Here we have end-to-end folder structure of the system we have built. By the way, for the title of the agents, I designed as **{the_doer_agent} + geneer**. For examle code generator agent is a Test Engineer that writes codes. That is why it is titles as **codegeneer**
@@ -253,52 +208,7 @@ Routing between nodes is driven by `state.status` (`RUNNING`, `FAILED`,
 `PARTIAL`, `SUCCESS`) and, for the Evaluator-Optimizer loop, by
 `criteria_result.retry_needed`.
 
-```
- ┌────────────┐   ┌─────────────┐   ┌──────────────┐
- │ task_parser│──▶│ repo_manager│──▶│ repo_analyzer│
- └─────┬──────┘   └──────┬──────┘   └──────┬───────┘
-       │ FAILED          │ FAILED          │ FAILED
-       └─────────────────┴────────┬────────┘
-                                   │ RUNNING
-                                   ▼
-                          ┌──────────────┐
-                          │ code_writer  │◀─────────────┐
-                          └──────┬───────┘              │
-                                  │                       │ retry_needed
-                                  ▼                       │ (max 2x)
-                          ┌──────────────┐              │
-                          │ code_reviewer│              │
-                          └──────┬───────┘              │
-                                  │                       │
-                                  ▼                       │
-                       ┌────────────────────┐           │
-                       │ criteria_verifier  │───────────┘
-                       └─────────┬──────────┘
-                                  │ all satisfied / retries exhausted
-                                  ▼
-                          ┌──────────────┐
-                          │ test_runner  │
-                          └──────┬───────┘
-                     FAILED ◀────┤ PARTIAL / RUNNING
-                          │       ▼
-                          │  ┌──────────────┐
-                          │  │  git_agent   │
-                          │  └──────┬───────┘
-                          │   FAILED│  continue
-                          │         ▼
-                          │  ┌──────────────┐
-                          │  │  pr_agent    │
-                          │  └──────┬───────┘
-                          │  continue│  FAILED (after push)
-                          │         │         ▼
-                          │         │  ┌──────────────────┐
-                          │         │  │ rollback_agent   │
-                          │         │  └────────┬─────────┘
-                          ▼         ▼            ▼
-                          ┌────────────────────────┐
-                          │        report           │
-                          └────────────────────────┘
-```
+<img width="7500" height="9750" alt="Image" src="https://github.com/user-attachments/assets/a53f0f22-cfda-46a6-8e76-94e72abee0d1" />
 
 ### Node responsibilities
 
@@ -357,24 +267,7 @@ can mock each node independently and still exercise the full graph.
 
 ### 5.3 Evaluator-Optimizer
 
-```
-                ┌─────────────┐
-   requirement ─▶│ code_writer │──┐
-                ┌▶└─────────────┘  │ diff + files
-                │                  ▼
-                │           ┌───────────────┐
-                │           │ code_reviewer │ (non-blocking — reports issues)
-                │           └───────┬───────┘
-                │                   ▼
-                │         ┌───────────────────┐
-                │         │ criteria_verifier  │
-                │         └─────────┬──────────┘
-                │      not satisfied │ satisfied
-                │     (retry < 2)    │
-                └────────────────────┘
-                                     ▼
-                               test_runner
-```
+<img width="4500" height="2500" alt="Image" src="https://github.com/user-attachments/assets/49fa80bb-8380-4566-985b-062d7915c4a0" />
 
 `code_reviewer` is the "quality" evaluator (security, correctness, dead code,
 test coverage) — it never blocks the pipeline, but its findings feed into the
@@ -397,20 +290,8 @@ status (see section 14).
 
 ### 5.5 Rollback on partial failure
 
-```
-git_agent (branch created, committed, pushed)  --- SUCCESS
-        │
-        ▼
-   pr_agent  --- FAILED (e.g. GitHub API error)
-        │
-        ▼
- rollback_agent
-   - GitProvider.delete_branch(repo, branch)
-   - audit("branch.deleted", reason=..., success=...)
-        │
-        ▼
-     report (status=failed, "rollback": {...})
-```
+<img width="3500" height="3000" alt="Image" src="https://github.com/user-attachments/assets/28db50b3-eec5-4c52-95a9-4d57d1f54e5a" />
+
 
 If `git_agent` itself fails, nothing was pushed, so `rollback_agent` is
 skipped entirely (`report.rollback.performed = false`). Rollback only
