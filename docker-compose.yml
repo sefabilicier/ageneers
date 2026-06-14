@@ -1,0 +1,73 @@
+# ageneers — full stack via Docker Compose
+#
+# Expected directory layout (this file lives in the backend root):
+#
+#   ageneers/                <- this directory (backend, contains this file)
+#   ├── docker-compose.yml
+#   ├── Dockerfile
+#   ├── .env
+#   ├── app/
+#   └── ageneers-ui/         <- frontend project, as a SUBDIRECTORY here
+#
+# If your frontend currently lives elsewhere (e.g. a sibling D:\ageneers-ui),
+# move or copy it into D:\ageneers\ageneers-ui first, or change the
+# `frontend.build.context` path below to point at it (e.g. "../ageneers-ui").
+#
+# Usage:
+#   docker compose up --build
+#
+# Backend  -> http://localhost:8000
+# Frontend -> http://localhost:5173
+#
+# Requires a .env file in this directory with at least:
+#   GROQ_API_KEY=...
+#   GITHUB_TOKEN=...
+#
+# Docker sandbox (USE_DOCKER_SANDBOX=true):
+#   The backend container mounts the host's Docker socket so test_runner
+#   can launch sandbox containers on the SAME Docker daemon this compose
+#   stack is running on (Docker-out-of-Docker). On Windows, run
+#   `docker compose` from inside WSL so /var/run/docker.sock exists.
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ageneers-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Inside the container there's no WSL layer — talk to the mounted
+      # socket directly. Overrides whatever DOCKER_CMD is set to in .env.
+      DOCKER_CMD: docker
+      CORS_ALLOW_ORIGINS: http://localhost:5173
+    volumes:
+      - ./workspaces:/app/workspaces
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+      # Docker-out-of-Docker: lets test_runner sandbox tests on the host
+      - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./ageneers-ui
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    image: ageneers-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped

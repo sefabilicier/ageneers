@@ -1,0 +1,26 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Runtime data — mounted as volumes, not baked into the image
+workspaces/
+reports/
+logs/
+
+# Secrets — passed via --env-file or compose env, never copied in
+.env
+
+# Dev/test
+tests/
+.git/
+.gitignore
+
+# Frontend lives in its own image
+ageneers-ui/
+
+# Docs
+README.md
+*.md
