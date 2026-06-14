@@ -617,6 +617,73 @@ curl -X POST http://localhost:8000/api/tasks \
   }'
 ```
 
+#### 11.1.2 CLI Testing 
+Yes, I have CLI option to test it, let us make this system real agentic system ;)
+
+The `cli.py` script provides three ways to submit tasks to the AI development agent.
+
+##### File Locations
+
+- `cli.py` – Project root directory
+- `task.example.json` – Project root directory
+
+##### Prerequisites
+
+- Python 3.12+
+- `rich` (optional, for enhanced output with colors and spinners)
+
+###### Usage Modes
+
+###### 1. Interactive Mode
+
+Prompts you for task details step by step.
+
+```bash
+python cli.py
+```
+
+###### 2. JSON File Mode
+Load task configuration from a JSON file.
+
+```python
+cli.py --file task.example.json
+```
+Example JSON structure (`task.example.json`):
+```json
+{
+  "task_id": "TASK-123",
+  "title": "Add email validation",
+  "description": "Repository: https://github.com/sefabilicier/iamtesting\nBranch: main\nAdd input validation for GET /users/{email} endpoint"
+}
+```
+
+###### 3. Direct Arguments Mode
+Submit a task with command-line arguments.
+
+```bash
+# Windows PowerShell
+python cli.py `
+  --task-id TASK-123 `
+  --title "Add email validation" `
+  --description "Repository: https://github.com/sefabilicier/iamtesting`nBranch: main`nAdd input validation for GET /users/{email} endpoint" `
+  --wait
+
+# Linux / macOS
+python cli.py \
+  --task-id TASK-123 \
+  --title "Add email validation" \
+  --description "Repository: https://github.com/sefabilicier/iamtesting\nBranch: main\nAdd input validation for GET /users/{email} endpoint" \
+  --wait
+```
+
+The `--wait`  Flag
+Rich Installed	Behavior
+- Yes	Colorful output with spinners and progress indicators
+- No	Plain text output showing execution progress
+- When `--wait` is used, the CLI waits until the pipeline completes and displays the execution report directly in the terminal.
+
+
+
 Then poll `/api/tasks/{traceId}/report` until `status` is no longer
 `running`. A successful run ends with a `pullRequest` object containing a
 real GitHub PR URL.
@@ -1164,17 +1231,13 @@ cp .env.example .env
 npm run dev
 ```
 
-By default it expects the backend at http://localhost:8000 and itself runs
-on http://localhost:5173. If API_KEY is set on the backend, set the same
-value as VITE_API_KEY in the frontend's .env so requests include the
-X-API-Key header. The backend's CORS_ALLOW_ORIGINS must include the
-frontend's origin (default already does).
+##### By default it expects the backend at http://localhost:8000 and itself runs on http://localhost:5173. If API_KEY is set on the backend, set the same value as VITE_API_KEY in the frontend's .env so requests include the X-API-Key header. The backend's CORS_ALLOW_ORIGINS must include the frontend's origin (default already does).
 ---
 
 ## 13. Execution report reference
 
-GET /api/tasks/{traceId}/report returns this shape once the pipeline
-finishes (while running, it returns 202 with {"status": "running"}):
+` GET /api/tasks/{traceId}/report` returns this shape once the pipeline
+finishes (while running, it returns `202` with `{"status": "running"})`:
 
 ```json
 {
@@ -1286,17 +1349,17 @@ aren't met), while TEST_FAILURE_MODE=retry fires after tests run.
 
 | Concern | Mitigation |
 |---|---|
-| Credential storage | GITHUB_TOKEN / GROQ_API_KEY read from .env (git-ignored), masked as *** in logs |
-| Command injection | All git operations via GitPython (no shell=True); test commands run as argument lists |
-| Prompt injection | app/security/sanitizer.py scans task text for override/jailbreak patterns before it reaches any LLM |
-| Secret leakage to LLM | Sanitizer redacts API-key-shaped strings before sending file contents to the model |
-| Repository access control | REPO_ALLOWLIST / REPO_DENYLIST, checked before clone |
-| Workspace isolation | One UUID-suffixed directory per task; never shared |
-| Test execution isolation | Optional Docker sandbox: no network, capped CPU/memory, ephemeral container (section 11.4) |
-| API authentication | Optional X-API-Key header via API_KEY (section 11.12) |
-| Abuse / overload | Rate limiting (RATE_LIMIT_TASKS) and concurrency cap (MAX_CONCURRENT_TASKS) |
-| Output validation | Every LLM-proposed file change is checked against the workspace root -- no path traversal, no writes outside the clone |
-| Auditability | Append-only logs/audit.log for task receipt, PR creation, and rollbacks |
+| Credential storage | `GITHUB_TOKEN` / `GROQ_API_KEY` read from `.env` (git-ignored), masked as `***` in logs |
+| Command injection | All git operations via GitPython (no `shell=True`); test commands run as argument lists |
+| Prompt injection | `app/security/sanitizer.py` scans task text for override/jailbreak patterns **before it reaches any LLM** |
+| Secret leakage to LLM | Sanitizer redacts API-key-shaped strings **before sending file contents to the model** |
+| Repository access control | `REPO_ALLOWLIST` / `REPO_DENYLIST`, checked **before clone** |
+| Workspace isolation | **One UUID-suffixed directory per task**; never shared |
+| Test execution isolation | Optional Docker sandbox: **no network, capped CPU/memory, ephemeral container** (section 11.4) |
+| API authentication | Optional `X-API-Key` header via `API_KEY` (section 11.12) |
+| Abuse / overload | Rate limiting (`RATE_LIMIT_TASKS`) and concurrency cap (`MAX_CONCURRENT_TASKS`) |
+| Output validation | **Every LLM-proposed file change** is checked against the workspace root -- **no path traversal, no writes outside the clone** |
+| Auditability | Append-only `logs/audit.log` for task receipt, PR creation, and rollbacks |
 
 ---
 
@@ -1304,17 +1367,39 @@ aren't met), while TEST_FAILURE_MODE=retry fires after tests run.
 
 The three layers from sections 11.15-11.17, summarised:
 
-1. Structured logs -- every node logs started / completed (with
-   duration_ms) / failed (with error + hint); one pipeline.summary line per
-   run.
-2. Metrics -- /api/metrics (JSON) and /api/metrics/prometheus (Prometheus
-   text format): success rate, average duration, token usage, average
-   quality score.
-3. Per-run detail -- /api/tasks/{traceId}/timeline (step durations, slowest
-   step) and /api/tasks/{traceId}/report (full execution report, persisted to
-   reports/<traceId>.json).
-4. Audit trail -- /api/audit and logs/audit.log, an append-only NDJSON record
-   of task receipts, PR creations, and rollbacks.
+#### 16.1 Structured Logs
+
+Every node logs:
+- `started` / `completed` (with `duration_ms`)
+- `failed` (with error + hint)
+- One `pipeline.summary` line per run
+
+#### 16.2. Metrics
+
+| Endpoint | Format | Exposed Metrics |
+|---|---|---|
+| `/api/metrics` | JSON | Success rate, average duration, token usage, average quality score |
+| `/api/metrics/prometheus` | Prometheus text format | Same metrics in Prometheus-compatible format |
+
+#### 16.3. Per-Run Detail
+
+| Endpoint | Description |
+|---|---|
+| `/api/tasks/{traceId}/timeline` | Step durations, slowest step identification |
+| `/api/tasks/{traceId}/report` | Full execution report (persisted to `reports/<traceId>.json`) |
+
+#### 16.4. Audit Trail
+
+| Resource | Format | Contents |
+|---|---|---|
+| `/api/audit` | JSON | Queryable audit records |
+| `logs/audit.log` | NDJSON (append-only) | Task receipts, PR creations, rollbacks |
+
+**Audit Log Characteristics:**
+- Append-only (cannot be modified after writing)
+- NDJSON format (one JSON object per line)
+- Records: task receipts, PR creations, rollback events
+
 
 ---
 
@@ -1342,9 +1427,9 @@ pytest tests/ -q
 
 ## 18. Known limitations
 
-- Private repositories are supported via GITHUB_TOKEN in the clone URL, but
+- Private repositories are supported via `GITHUB_TOKEN` in the clone URL, but
   the token needs repo scope.
-- Very large repositories: context is capped at MAX_CONTEXT_CHARS (default
+- Very large repositories: context is capped at `MAX_CONTEXT_CHARS` (default
   24,000 chars) across relevant files; very large files are truncated, and
   deep monorepos may not surface every relevant file.
 - Cross-file dependencies not in the relevant-files set can be missed by the
@@ -1354,20 +1439,21 @@ pytest tests/ -q
 - In-memory metrics and reports: counters reset on restart; reports are
   persisted to disk but the metrics aggregation is not.
 - No task queue: concurrent tasks run as FastAPI background tasks, capped by
-  MAX_CONCURRENT_TASKS -- under heavier load, a real queue (Celery, ARQ)
+  `MAX_CONCURRENT_TASKS` -- under heavier load, a real queue (Celery, ARQ)
   would be needed.
 - Binary files are skipped during code generation.
-- Single git provider: only GitHub is implemented today, though the
-  GitProvider abstraction (section 5.6) makes adding others straightforward.
+- **Single git provider**: only GitHub is implemented today, though the
+  GitProvider abstraction (section 5.6 - `app/providers/git_provider.py`) makes adding others straightforward. Anytime the provider can be changed in easy way. For the next phase, analyzer may be implemented as to which provider link is provided, then take action to switch it.
 
 ---
 
 ## 19. Roadmap
+Here I have some ways to improve the efficiency of the system.
 
-- [ ] Model fallback chain (Groq -> OpenAI -> local model) for resilience
+- [ ] Model fallback chain (`Groq -> OpenAI -> local model`) for resilience
       against provider outages
-- [ ] Replace in-memory metrics/report store with Redis or PostgreSQL
-- [ ] Task queue (Celery / ARQ) with a worker pool for true horizontal scaling
+- [ ] Replace `in-memory` metrics/report store with `Redis or PostgreSQL`
+- [ ] Task queue (`Celery / ARQ`) with a worker pool for true horizontal scaling
 - [ ] GitLab and Bitbucket GitProvider implementations
 - [ ] Structured output mode for the LLM (JSON schema enforcement) instead of
       the current XML/JSON parsing fallback chain
