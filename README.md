@@ -184,9 +184,10 @@ ageneers/
 │   └── utils/
 │       ├── logger.py                 structlog setup, log_step, pipeline summary
 │       ├── audit.py                  append-only NDJSON audit trail
-│       ├── docker_sandbox.py         isolated test execution via Docker/WSL
+│       ├── docker_sandbox.py         Dockerfile.sandbox - isolated test execution via Docker/WSL
 │       ├── workspace_cleanup.py      scheduled deletion of old workspaces
-│       └── vector_index.py           embedding-based relevant-file search
+│       ├── vector_index.py           embedding-based relevant-file search
+│       └── quality_score.py          execution quality scoring (A-F)
 ├── tests/                            120 tests, fully mocked
 ├── workspaces/                       cloned repos (git-ignored, auto-cleaned)
 ├── reports/                          persisted execution reports (JSON)
@@ -194,6 +195,12 @@ ageneers/
 │   └── audit.log                     append-only audit trail (NDJSON)
 ├── ageneers-ui/                      React frontend -- Pipeline Console
 ├── .env.example
+├── Dockerfile
+├── Dockerfile.sandbox
+├── docker-compose.yml
+├── .env.example
+├── pyproject.toml
+├── task.example.json
 └── README.md
 ```
 
@@ -682,9 +689,10 @@ Rich Installed	Behavior
 - No	Plain text output showing execution progress
 - When `--wait` is used, the CLI waits until the pipeline completes and displays the execution report directly in the terminal.
 
+<img width="1592" height="401" alt="Image" src="https://github.com/user-attachments/assets/537c565a-8b22-412e-90c4-47f64157865e" />
 
 
-Then poll `/api/tasks/{traceId}/report` until `status` is no longer
+Then after normal/cli request poll `/api/tasks/{traceId}/report` until `status` is no longer
 `running`. A successful run ends with a `pullRequest` object containing a
 real GitHub PR URL.
 
