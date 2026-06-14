@@ -22,14 +22,15 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.utils.logger import configure_logging, get_logger
 
-# ── Configure logging before anything else ───────────────────────────────────
-configure_logging()
-logger = get_logger(__name__)
-
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
+
+
+# ── Configure logging before anything else ───────────────────────────────────
+configure_logging()
+logger = get_logger(__name__)
 
 
 # ── Lifespan (startup / shutdown hooks) ──────────────────────────────────────
@@ -73,6 +74,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         api_key = os.getenv("API_KEY", "")
+        # CORS preflight requests never carry custom headers — let them through
+        # so the browser can complete its preflight check before the real request.
+        if request.method == "OPTIONS":
+            return await call_next(request)
         if not api_key or request.url.path in self.OPEN_PATHS:
             return await call_next(request)
         key = request.headers.get("X-API-Key", "")
@@ -140,6 +145,17 @@ def create_app() -> FastAPI:
 
     # ── Middleware (must be added before first request, here in create_app) ──
     app.add_middleware(APIKeyMiddleware)
+
+    # ── CORS — allow the frontend dev console to call the API ────────────────
+    from fastapi.middleware.cors import CORSMiddleware
+    cors_origins = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173").split(",")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in cors_origins],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # ── Rate limiting ─────────────────────────────────────────────────────────
     from slowapi import _rate_limit_exceeded_handler

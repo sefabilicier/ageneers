@@ -251,7 +251,7 @@ async def get_prometheus_metrics():
 
     Add to prometheus.yml:
         scrape_configs:
-          - job_name: ai-dev-agent
+          - job_name: ageneers
             static_configs:
               - targets: [localhost:8000]
             metrics_path: /api/metrics/prometheus
