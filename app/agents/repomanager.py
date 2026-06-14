@@ -23,8 +23,10 @@ LangGraph contract:
 from __future__ import annotations
 
 import os
+import time
 import shutil
 import uuid
+from pathlib import Path
 from typing import Any
 
 import git
@@ -131,7 +133,7 @@ def run(state: AgentState) -> dict[str, Any]:
     # ── Security: allowlist / denylist check ─────────────────────────────
     safe, reason = is_safe_repo_url(repo_url, REPO_ALLOWLIST, REPO_DENYLIST)
     if not safe:
-        logger.error("repo_manager.url_blocked", repo=repo_url, reason=reason)
+        logger.error("repo_manager.url_blocked", repo=repo_url, reason=reason, hint="Add repo owner to REPO_ALLOWLIST or remove from REPO_DENYLIST in .env")
         state.log_step("repo_manager", "failed", detail=reason)
         return {"status": PipelineStatus.FAILED, "error": reason, "step_logs": state.step_logs}
 
@@ -156,7 +158,7 @@ def run(state: AgentState) -> dict[str, Any]:
     except git.exc.GitCommandError as exc:
         # Scrub any token from the error message before logging
         safe_msg = str(exc).replace(GITHUB_TOKEN, "***") if GITHUB_TOKEN else str(exc)
-        logger.error("repo_manager.clone_failed", error=safe_msg)
+        logger.error("repo_manager.clone_failed", error=safe_msg, hint="Check GITHUB_TOKEN permissions and repository URL")
         state.log_step("repo_manager", "failed", detail=safe_msg)
         return {"status": PipelineStatus.FAILED, "error": safe_msg, "step_logs": state.step_logs}
 
@@ -167,6 +169,27 @@ def run(state: AgentState) -> dict[str, Any]:
         logger.error("repo_manager.wrong_branch", expected=branch, got=current_branch)
         state.log_step("repo_manager", "failed", detail=msg)
         return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
+
+    # ── Ensure Python build artifacts are gitignored ────────────────────────
+    # If the repo's .gitignore doesn't already cover these, append them.
+    # Without this, running tests (host or Docker sandbox) creates
+    # __pycache__/*.pyc files that git_agent would otherwise stage and
+    # commit, causing spurious binary-file merge conflicts in the PR.
+    try:
+        _BUILD_ARTIFACT_PATTERNS = ["__pycache__/", "*.pyc", "*.pyo", ".pytest_cache/"]
+        gitignore_path = Path(workspace) / ".gitignore"
+        existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+        missing = [p for p in _BUILD_ARTIFACT_PATTERNS if p not in existing]
+        if missing:
+            with open(gitignore_path, "a", encoding="utf-8") as f:
+                if existing and not existing.endswith("\n"):
+                    f.write("\n")
+                f.write("\n# Added by ai-dev-agent — never commit Python build artifacts\n")
+                f.write("\n".join(missing) + "\n")
+            logger.info("repo_manager.gitignore_patched", added=missing)
+    except OSError as exc:
+        # Non-fatal — gitgeneer also strips these patterns at commit time
+        logger.warning("repo_manager.gitignore_patch_skipped", error=str(exc))
 
     logger.info(
         "repo_manager.completed",

@@ -157,7 +157,7 @@ ageneers/
 │   │   └── monitoring.py             /api/metrics, /api/audit, /api/prompts, etc.
 │   ├── agents/                       one file per pipeline node
 │   │   ├── taskparsergeneer.py       Node 1  -- parse task -> ParsedTask
-│   │   ├── repomanagergeneer.py      Node 2  -- clone repo into workspace
+│   │   ├── repomanager.py      Node 2  -- clone repo into workspace
 │   │   ├── repoanalyzegeneer.py      Node 3  -- detect stack, rank relevant files
 │   │   ├── codegeneer.py             Node 4  -- LLM writes the code change
 │   │   ├── codereviewgeneer.py       Node 5  -- LLM reviews the diff
@@ -681,7 +681,7 @@ host:
 ```
 docker run --rm --network=none --memory=512m --cpus=1
   -v <workspace>:/workspace --workdir /workspace
-  python:3.12-slim
+  rageneers-sandbox:latest
   sh -c "pip install pytest ... && cd /workspace && python -m pytest ..."
 ```
 
@@ -1334,7 +1334,7 @@ pytest tests/ -q
 | test_testgeneer.py | 18 | Test execution, retry logic, sandbox fallback |
 | test_repoanalyzegeneer.py | 13 | Stack detection, file ranking |
 | test_gitgeneer.py | 10 | Branching, committing, pushing |
-| test_repomanagergeneer.py | 9 | Cloning, allowlist/denylist, workspace setup |
+| test_repomanager.py | 9 | Cloning, allowlist/denylist, workspace setup |
 | test_pipeline.py | 7 | Full graph wiring, routing, fail-fast paths |
 | test_rollbackgeneer.py | 4 | Rollback skip/success/failure/exception paths |
 

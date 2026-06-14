@@ -134,7 +134,7 @@ def run(state: AgentState) -> dict[str, Any]:
             f"A task with the same ID and title was likely already processed. "
             f"To re-run, use a different taskId or modify the title slightly."
         )
-        logger.error("git_agent.duplicate_branch", branch=branch_name)
+        logger.error("git_agent.duplicate_branch", branch=branch_name, hint="Use a different taskId or title to generate a unique branch name")
         state.log_step("git_agent", "failed", detail=msg)
         return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
 
@@ -151,10 +151,49 @@ def run(state: AgentState) -> dict[str, Any]:
 
     # ── Stage all changes ─────────────────────────────────────────────────
     repo.git.add(A=True)
+
+    # Never commit Python/test build artifacts, even if the workspace's
+    # .gitignore doesn't cover them (or test execution created them after
+    # clone). Leaving these staged causes spurious merge conflicts in PYC
+    # files and pollutes the diff with binary noise.
+    #
+    # Two cases to handle:
+    #   1. Newly created/modified .pyc files -> `git reset HEAD --` unstages
+    #      them (they remain untracked, never committed).
+    #   2. Files that were ALREADY tracked in a previous commit (e.g. an
+    #      earlier PR accidentally committed __pycache__/) -> `reset HEAD`
+    #      is not enough, since the file stays tracked and shows as
+    #      "modified" -> still gets committed. `git rm --cached` removes
+    #      them from tracking entirely (the file stays on disk, just no
+    #      longer part of the repo).
+    _UNWANTED_PATTERNS = [
+        "*.pyc", "*.pyo", "__pycache__", ".pytest_cache",
+        "*.egg-info", ".coverage", ".mypy_cache", ".ruff_cache",
+    ]
+    for pattern in _UNWANTED_PATTERNS:
+        # Unstage anything newly staged matching this pattern
+        try:
+            repo.git.execute(["git", "reset", "HEAD", "--", f"**/{pattern}", pattern])
+        except git.exc.GitCommandError:
+            pass  # nothing staged matching this pattern — fine
+
+        # Remove from tracking anything that was already committed before
+        try:
+            repo.git.execute([
+                "git", "rm", "--cached", "-r", "--ignore-unmatch",
+                "-q", f"**/{pattern}", pattern,
+            ])
+        except git.exc.GitCommandError:
+            pass  # nothing tracked matching this pattern — fine
+
+    # If we just untracked files that were part of HEAD, that removal is
+    # itself a staged change — which is exactly what we want: the PR will
+    # clean these artifacts out of the repo as part of this commit.
+
     staged = repo.index.diff("HEAD")
     if not staged and not repo.untracked_files:
         msg = "git_agent: no changes to commit — code_writer may not have written any files"
-        logger.warning("git_agent.nothing_to_commit")
+        logger.warning("git_agent.nothing_to_commit", hint="code_writer may have written no files — check code_writer.completed log")
         state.log_step("git_agent", "failed", detail=msg)
         return {"status": PipelineStatus.FAILED, "error": msg, "step_logs": state.step_logs}
 
@@ -240,11 +279,11 @@ def run(state: AgentState) -> dict[str, Any]:
                         ),
                     )
                 raise git.exc.GitCommandError("push", summary)
-        logger.info("git_agent.pushed", branch=branch_name)
+        logger.info("git_agent.pushed", branch=branch_name, remote=original_url.split("github.com/")[-1] if "github.com" in original_url else "remote")
 
     except git.exc.GitCommandError as exc:
         safe_err = str(exc).replace(GITHUB_TOKEN, "***") if GITHUB_TOKEN else str(exc)
-        logger.error("git_agent.push_failed", error=safe_err)
+        logger.error("git_agent.push_failed", error=safe_err, hint="Check GITHUB_TOKEN has repo write permission, or branch protection rules")
         state.log_step("git_agent", "failed", detail=safe_err)
         return {"status": PipelineStatus.FAILED, "error": safe_err, "step_logs": state.step_logs}
 

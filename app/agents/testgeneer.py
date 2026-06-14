@@ -164,12 +164,19 @@ def _run_tests(command: list[str], workspace: Path) -> tuple[int, str, float]:
     # Host execution (default or fallback)
     logger.info("test_runner.using_host", mode="host", workspace=str(workspace))
     try:
+        # Match the sandbox: put the workspace root on PYTHONPATH so
+        # `from app.main import app`-style absolute imports resolve the
+        # same way whether tests run in Docker or directly on the host.
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(workspace) + os.pathsep + env.get("PYTHONPATH", "")
+
         result = subprocess.run(
             command,
             cwd=str(workspace),
             capture_output=True,
             text=True,
             timeout=TEST_TIMEOUT_SECONDS,
+            env=env,
         )
         output = result.stdout + "\n" + result.stderr
         return result.returncode, output.strip(), time.monotonic() - start

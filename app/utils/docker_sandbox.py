@@ -43,7 +43,7 @@ logger = get_logger(__name__)
 # Config
 # ─────────────────────────────────────────────────────────────────────────────
 
-DOCKER_IMAGE   = os.getenv("DOCKER_SANDBOX_IMAGE", "ageneers-sandbox:latest")
+DOCKER_IMAGE   = os.getenv("DOCKER_SANDBOX_IMAGE", "rageneers-sandbox:latest")
 DOCKER_MEMORY  = os.getenv("DOCKER_SANDBOX_MEMORY", "512m")
 DOCKER_CPUS    = os.getenv("DOCKER_SANDBOX_CPUS", "1")
 DOCKER_TIMEOUT = int(os.getenv("DOCKER_SANDBOX_TIMEOUT", "120"))  # seconds
@@ -91,19 +91,60 @@ def _get_wsl_workspace_path(workspace: Path) -> str:
 
 def _get_install_cmd(workspace_wsl: str) -> list[str]:
     """
-    Build a shell command that installs workspace dependencies before pytest.
-    Tries requirements.txt first, then pyproject.toml.
+    Build a shell command that installs workspace dependencies then runs pytest.
+
+    Strategy (order matters):
+      1. Install repo-specific deps first, if requirements.txt exists.
+         A repo's requirements.txt may pin pydantic/fastapi to versions
+         that don't drag in optional extras like email-validator.
+      2. Install/upgrade the base test deps, so 'email-validator' is
+         guaranteed present for pydantic.EmailStr — this fixes
+         "ModuleNotFoundError: No module named 'email_validator'"
+         even when EmailStr wasn't in the repo's original dependencies.
+      3. Run pytest inside /workspace with PYTHONPATH=/workspace.
+
+    Why PYTHONPATH=/workspace:
+      Many target repos use absolute imports like `from app.main import app`
+      in their tests, relying on an editable install (`pip install -e .`) or
+      a conftest.py that adds the repo root to sys.path. Neither exists in
+      the sandbox — only the raw files are mounted. Setting PYTHONPATH to
+      the workspace root makes the top-level package(s) importable without
+      requiring the target repo to have any particular packaging setup.
+      This fixes "ModuleNotFoundError: No module named 'app'".
+
+    Why both install steps are non-fatal (`|| true`):
+      The container runs with --network=none, so pip has no internet access
+      unless every package is already cached/installed in the image. If a
+      package needs to be fetched and can't be, `pip install` fails with
+      "Temporary failure in name resolution" — and because this whole
+      command is a single `&&`-chained `sh -c`, that failure used to abort
+      BEFORE pytest ever ran, turning a missing-package problem into a
+      "0 tests collected" mystery.
+      Making both pip steps best-effort means: if the sandbox image
+      (DOCKER_SANDBOX_IMAGE, e.g. a custom ageneers-sandbox image) already
+      has everything needed, tests run with zero network calls as intended;
+      if something IS missing, pytest still runs and reports a clear
+      ModuleNotFoundError pointing at the actual missing package, instead of
+      a confusing pip connection error.
     """
+    # Base packages always needed. email-validator>=2.0 matches the
+    # pydantic v2 EmailStr import check (pydantic.networks.import_email_validator).
+    base_pkgs = "pytest pytest-asyncio httpx fastapi 'pydantic>=2.0' 'email-validator>=2.0' anyio"
+
     return [
         "sh", "-c",
         (
-            "pip install --quiet --no-cache-dir fastapi httpx pydantic pytest pytest-asyncio 2>/dev/null; "
-            f"if [ -f {workspace_wsl}/requirements.txt ]; then "
-            f"  pip install --quiet --no-cache-dir -r {workspace_wsl}/requirements.txt 2>/dev/null; "
-            f"elif [ -f {workspace_wsl}/pyproject.toml ]; then "
-            f"  pip install --quiet --no-cache-dir {workspace_wsl} 2>/dev/null || true; "
-            f"fi; "
-            f"cd {workspace_wsl} && pytest --rootdir={workspace_wsl} --override-ini=addopts= -p no:cacheprovider"
+            # Step 1: install repo deps if requirements.txt exists (best-effort,
+            # never fatal — under --network=none this is a no-op unless the
+            # packages are already cached in the image).
+            f"([ -f /workspace/requirements.txt ] && "
+            f"pip install --quiet --no-cache-dir -r /workspace/requirements.txt || true) ; "
+            # Step 2: install/upgrade base test deps — also best-effort.
+            f"(pip install --quiet --no-cache-dir --upgrade {base_pkgs} || true) ; "
+            # Step 3: run pytest with the workspace root on PYTHONPATH.
+            # This always runs, regardless of whether steps 1/2 succeeded.
+            f"cd /workspace && "
+            f"PYTHONPATH=/workspace python -m pytest --rootdir=/workspace --override-ini=addopts= -p no:cacheprovider -v"
         )
     ]
 
