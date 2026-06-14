@@ -208,7 +208,7 @@ Routing between nodes is driven by `state.status` (`RUNNING`, `FAILED`,
 `PARTIAL`, `SUCCESS`) and, for the Evaluator-Optimizer loop, by
 `criteria_result.retry_needed`.
 
-<img width="7500" height="9750" alt="Image" src="https://github.com/user-attachments/assets/a53f0f22-cfda-46a6-8e76-94e72abee0d1" />
+<img width="7440" height="9000" alt="Image" src="https://github.com/user-attachments/assets/a5d606bd-732d-4a28-bc50-6915c06f795a" />
 
 ### Node responsibilities
 
@@ -889,24 +889,74 @@ a real failure.
 
 ### 11.11 GitHub Issue webhook
 
+ 
 **What it does** — `POST /api/webhooks/github` lets a GitHub Issue trigger
 the pipeline directly: when an issue is opened or labeled with `ai-agent`
 (configurable via `AI_AGENT_LABEL`), the issue body is parsed the same way as
 a manual task description, and the pipeline runs automatically.
-
-**How to test** —
-
-1. In your GitHub repo, go to **Settings → Webhooks → Add webhook**.
-2. Payload URL: `https://<your-server>/api/webhooks/github`
-3. Content type: `application/json`
-4. Secret: match `GITHUB_WEBHOOK_SECRET` in `.env`
-5. Events: select "Issues"
-6. Open an issue with a body containing `Repository:`, `Branch:`,
+ 
+**The local-development problem** — GitHub needs to send the webhook to a
+publicly reachable URL, but during development the backend runs on
+`localhost:8000`, which GitHub's servers cannot reach. [ngrok](https://ngrok.com)
+solves this by opening a secure tunnel from a public URL to your local port,
+so GitHub can deliver webhooks straight to your machine without deploying
+anything.
+ 
+**How to set it up with ngrok** —
+ 
+1. Install ngrok and authenticate (one-time):
+*Once you logged into the ngrok website, you will have guide to have your ngrok token to activate.*
+```bash
+   ngrok config add-authtoken <your-ngrok-token>
+```
+ 
+2. Start the backend as usual:
+```bash
+   python app/main.py
+   # running on http://localhost:8000
+```
+ 
+3. In a separate terminal, open a tunnel to port 8000:
+```bash
+   ngrok http 8000
+```
+ 
+   ngrok prints a public HTTPS URL, e.g.:
+ 
+```
+   Forwarding   https://a1b2-c3d4-e5f6.ngrok-free.app -> http://localhost:8000
+```
+ 
+   This URL is temporary — every time you restart ngrok (free plan), a new
+   random subdomain is generated, and the GitHub webhook URL below must be
+   updated to match.
+ 
+4. In your GitHub repo, go to **Settings → Webhooks → Add webhook**:
+   - Payload URL: `https://<your-ngrok-subdomain>.ngrok-free.app/api/webhooks/github`
+   - Content type: `application/json`
+   - Secret: match `GITHUB_WEBHOOK_SECRET` in `.env`
+   - Events: select "Issues"
+5. Open an issue with a body containing `Repository:`, `Branch:`,
    `Requirement:`, and `Acceptance Criteria:` sections (same format as the
    manual task description), and add the `ai-agent` label.
+GitHub sends the webhook to ngrok, ngrok forwards it to your local
+`:8000/api/webhooks/github`, the backend responds `202` immediately, and the
+pipeline runs in the background — same as a manual `POST /api/tasks`.
+ 
+**Verifying delivery** —
+ 
+- ngrok's local web interface at `http://127.0.0.1:4040` shows every request
+  it forwarded, including the raw GitHub payload and the response — useful
+  for debugging signature mismatches or malformed payloads.
+- GitHub's webhook settings page (**Settings → Webhooks → \<your webhook\> →
+  Recent Deliveries**) shows the same from GitHub's side, with a "Redeliver"
+  button to resend a payload without creating a new issue.
+**Production note** — ngrok is for local development and demos only. In
+production, the backend should be deployed behind a stable public URL (with
+TLS) and that URL registered directly as the webhook payload URL — no tunnel
+needed.
 
-The webhook responds `202` immediately and the pipeline runs in the
-background, same as a manual `POST /api/tasks`.
+
 ### 11.12 Security: API key auth, rate limiting, concurrency limits
 
 **What it does** —
